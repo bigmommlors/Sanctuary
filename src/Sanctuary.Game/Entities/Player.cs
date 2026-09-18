@@ -337,47 +337,56 @@ public sealed class Player : ClientPcData, IEntity
     }
 
     public void TeleportToZone(IZone zone, Vector4 position, Quaternion rotation)
+        => TeleportToZone(zone, position, rotation, forceEvenIfSameZone: false);
+
+    // EXPERIMENTAL BANDIT ZONING TEST may pass forceEvenIfSameZone when reloading an already-loaded zone
+    // so PacketClientBeginZoning is not skipped.
+    public void TeleportToZone(IZone zone, Vector4 position, Quaternion rotation, bool forceEvenIfSameZone)
     {
-        if (Zone == zone)
+        if (Zone == zone && !forceEvenIfSameZone)
             return;
 
-        if (Zone is StartingZone)
+        var sameZoneReload = ReferenceEquals(Zone, zone);
+
+        if (!sameZoneReload)
         {
-            StartingZonePosition = Position;
-            StartingZoneRotation = Rotation;
+            if (Zone is StartingZone)
+            {
+                StartingZonePosition = Position;
+                StartingZoneRotation = Rotation;
+            }
+
+            if (Mount is not null)
+                Mount.TeleportToZone(zone, position, rotation);
+
+            RemoveFromVisibleEntities(true);
+
+            ZoneTile.Entities.Remove(Guid, out _);
+
+            Zone.TryRemovePlayer(Guid);
+
+            zone.TryAddPlayer(this);
+
+            Zone = zone;
+
+            ZoneTile = ZoneTile.Empty;
         }
-
-        if (Mount is not null)
-            Mount.TeleportToZone(zone, position, rotation);
-
-        RemoveFromVisibleEntities(true);
-
-        ZoneTile.Entities.Remove(Guid, out _);
-
-        Zone.TryRemovePlayer(Guid);
-
-        // Add to new zone/zonetile
-
-        zone.TryAddPlayer(this);
-
-        // Teleport to new zone
 
         Visible = false;
 
-        Zone = zone;
-
-        ZoneTile = ZoneTile.Empty;
-
         UpdatePosition(position, rotation);
 
+        // Name loads client .gzne by string (client IndirectAssets). Sky comes from zone definition when set.
+        // GeometryId is Adventurers-Journal-related (see PacketClientBeginZoning); 0 = unset/AJ N/A.
+        // Do not invent world-specific GeometryId values without client evidence.
         var packetClientBeginZoning = new PacketClientBeginZoning
         {
             Name = Zone.Name,
             Position = position,
             Rotation = rotation,
-            Sky = "sky_deep_mines.xml",
+            Sky = Zone.Sky,
             Id = Zone.Id,
-            GeometryId = 214,
+            GeometryId = 0,
             OverrideUpdateRadius = true
         };
 

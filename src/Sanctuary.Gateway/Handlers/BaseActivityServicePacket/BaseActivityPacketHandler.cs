@@ -10,17 +10,17 @@ using Sanctuary.Packet.Common.Attributes;
 namespace Sanctuary.Gateway.Handlers;
 
 [PacketHandler]
-public static class WallOfDataBasePacketHandler
+public static class BaseActivityPacketHandler
 {
     private static ILogger _logger = null!;
 
     public static void ConfigureServices(IServiceProvider serviceProvider)
     {
         var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-        _logger = loggerFactory.CreateLogger(nameof(WallOfDataBasePacketHandler));
+        _logger = loggerFactory.CreateLogger(nameof(BaseActivityPacketHandler));
     }
 
-    public static bool HandlePacket(GatewayConnection connection, PacketReader reader)
+    public static bool HandlePacket(GatewayConnection connection, PacketReader reader, int serverType)
     {
         if (!reader.TryRead(out byte opCode))
         {
@@ -30,18 +30,15 @@ public static class WallOfDataBasePacketHandler
 
         return opCode switch
         {
-            WallOfDataPlayerKeyboardPacket.OpCode => WallOfDataPlayerKeyboardPacketHandler.HandlePacket(connection, reader.Span),
-            WallOfDataUIEventPacket.OpCode => WallOfDataUIEventPacketHandler.HandlePacket(connection, reader.Span),
-            _ => LogUnhandledSubOp(opCode, reader)
+            ActivityPacketJoinActivityRequest.OpCode => ActivityPacketJoinActivityRequestHandler.HandlePacket(connection, reader.Span, serverType),
+            _ => LogUnhandled(opCode, reader, serverType)
         };
     }
 
-    private static bool LogUnhandledSubOp(byte subOpCode, PacketReader reader)
+    private static bool LogUnhandled(byte opCode, PacketReader reader, int serverType)
     {
-        _logger.LogDebug(
-            "Unhandled WallOfData subopcode={SubOp} payload={Payload}",
-            subOpCode,
-            Convert.ToHexString(reader.Span));
+        _logger.LogWarning("Unhandled activity request: family=167, branch=1, message={Message}, ServerType={ServerType}, payload={Payload}",
+            opCode, serverType, Convert.ToHexString(reader.Span));
         return false;
     }
 }

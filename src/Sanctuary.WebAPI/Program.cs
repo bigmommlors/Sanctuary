@@ -1,7 +1,9 @@
+using System;
 using System.Globalization;
 
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -68,6 +70,35 @@ app.UseHttpLogging();
 #endif
 
 // Configure the HTTP request pipeline.
+
+// Local server discovery for OSFR Launcher 1.1.5 (manifest version 2).
+app.MapGet("/servermanifest.xml", () => Results.Text("""
+    <?xml version="1.0" encoding="utf-8"?>
+    <ServerManifest version="2">
+      <Name>Sanctuary Local</Name>
+      <Description>Local Sanctuary server</Description>
+      <WebApiUrl>http://127.0.0.1:20040</WebApiUrl>
+      <LoginServer>127.0.0.1:20042</LoginServer>
+    </ServerManifest>
+    """, "application/xml"));
+
+app.MapGet("/clientmanifest.xml", () => Results.Redirect(
+    "https://opensourcefreerealms.com/clientmanifest.xml", permanent: false));
+
+app.MapGet("/client/{**path}", (string? path) =>
+{
+    if (string.IsNullOrEmpty(path) || path.Contains('\\'))
+        return Results.BadRequest();
+
+    var segments = path.Split('/');
+
+    if (Array.Exists(segments, segment => segment is "" or "." or ".."))
+        return Results.BadRequest();
+
+    var encodedPath = string.Join("/", Array.ConvertAll(segments, Uri.EscapeDataString));
+
+    return Results.Redirect($"https://opensourcefreerealms.com/client/{encodedPath}", permanent: false);
+});
 
 app.MapAuthEndpoints();
 app.MapPortraitEndpoints();

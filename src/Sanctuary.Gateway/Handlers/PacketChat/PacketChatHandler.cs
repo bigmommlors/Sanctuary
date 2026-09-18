@@ -50,6 +50,12 @@ public static class PacketChatHandler
         connection.Player.SendTunneled(packet);
     }
 
+    private static bool IsLeaveBanditSlashCommand(string message)
+    {
+        var trimmed = message.Trim();
+        return trimmed.Equals("/leavebandit", StringComparison.OrdinalIgnoreCase);
+    }
+
     public static bool HandlePacket(GatewayConnection connection, ReadOnlySpan<byte> data)
     {
         if (!PacketChat.TryDeserialize(data, out var packet))
@@ -66,6 +72,19 @@ public static class PacketChatHandler
             return false;
         }
         
+        // LOCAL DEBUG: accept /leavebandit in addition to !leavebandit (chat command prefix).
+        if (IsLeaveBanditSlashCommand(packet.Message))
+        {
+            if (connection.Player.ChatCommandRole < Sanctuary.Game.ChatCommands.ChatCommandRole.Admin)
+            {
+                ChatHelper.SendSystemMessage(connection.Player, "You do not have permission to use this command.");
+                return true;
+            }
+
+            BaseEncounterPacketHandler.TryDebugLeaveBandit(connection);
+            return true;
+        }
+
         if (packet.Message.StartsWith(_chatCommandManager.Prefix))
         {
             if (!_chatCommandManager.TryHandle(connection.Player, packet.Message))

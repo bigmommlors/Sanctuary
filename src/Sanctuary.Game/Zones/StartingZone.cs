@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 using Sanctuary.Core.Extensions;
 using Sanctuary.Core.IO;
@@ -68,6 +69,8 @@ public sealed class StartingZone : BaseZone
         SendPlayerCustomizations(player);
 
         SendMembershipSubscriptionInfo(player);
+
+        SendListOfActivities(player);
 
         SendInGamePurchase(player);
 
@@ -1167,6 +1170,27 @@ public sealed class StartingZone : BaseZone
         };
 
         player.SendTunneled(packetMembershipSubscriptionInfo);
+    }
+
+    private void SendListOfActivities(Player player)
+    {
+        var activities = _resourceManager.ClientActivityDefinitions.Values.Where(x => x.ServerType == 2).ToList();
+        var packet = new ActivityPacketListOfActivities
+        {
+            ServerType = 2,
+            Activities = activities
+        };
+        player.SendTunneled(packet);
+        Logger.LogInformation("Activity-list packet sent for ServerType 2 with {Count} activities", activities.Count);
+
+        var worldActivities = _resourceManager.ClientActivityDefinitions.Values.Where(x => x.ServerType == 1).ToList();
+        packet = new ActivityPacketListOfActivities
+        {
+            ServerType = 1,
+            Activities = worldActivities
+        };
+        player.SendTunneled(packet);
+        Logger.LogInformation("Activity-list packet sent for ServerType 1 with {Count} activities", worldActivities.Count);
     }
 
     private void SendInGamePurchase(Player player)

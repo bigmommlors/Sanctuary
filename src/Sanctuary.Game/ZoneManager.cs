@@ -95,4 +95,52 @@ public class ZoneManager : IZoneManager
 
         return _zones.TryAdd(zone.Id, zone);
     }
+
+    public bool TryGetOrCreateInstanceZone(int definitionId, [MaybeNullWhen(false)] out IZone zone)
+    {
+        zone = default;
+
+        foreach (var existing in _zones.Values)
+        {
+            if (existing.DefinitionId == definitionId && existing is InstanceZone)
+            {
+                zone = existing;
+                return true;
+            }
+        }
+
+        if (!_resourceManager.Zones.TryGetValue(definitionId, out var zoneDefinition))
+        {
+            _logger.LogError("No zone definition Id={DefinitionId} in Resources/Zones.", definitionId);
+            return false;
+        }
+
+        if (zoneDefinition is not InstanceZoneDefinition instanceZoneDefinition)
+        {
+            _logger.LogError(
+                "Zone definition Id={DefinitionId} Name={Name} is not an Instance zone ($type Instance).",
+                definitionId, zoneDefinition.Name);
+            return false;
+        }
+
+        var created = new InstanceZone(instanceZoneDefinition, _serviceProvider)
+        {
+            Id = _uniqueId++
+        };
+
+        created.OnStart();
+
+        if (!_zones.TryAdd(created.Id, created))
+        {
+            _logger.LogError("Failed to register instance zone Id={ZoneId} DefinitionId={DefinitionId}.", created.Id, definitionId);
+            return false;
+        }
+
+        _logger.LogInformation(
+            "Created instance zone: ZoneId={ZoneId} DefinitionId={DefinitionId} Name={Name} Sky={Sky} Spawn={Spawn}",
+            created.Id, definitionId, created.Name, created.Sky, created.SpawnPosition);
+
+        zone = created;
+        return true;
+    }
 }

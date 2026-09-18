@@ -3,6 +3,7 @@
 using Microsoft.Extensions.Logging;
 
 using Sanctuary.Game;
+using Sanctuary.Game.Entities;
 using Sanctuary.Packet;
 using Sanctuary.UdpLibrary;
 using Sanctuary.UdpLibrary.Configuration;
@@ -31,6 +32,21 @@ public class GatewayServer : UdpManager<GatewayConnection>
     public void OnStarted()
     {
         _resourceManager.Zones.CollectionChanged += Zones_CollectionChanged;
+    }
+
+    public bool TryGetConnectionForPlayer(Player player, out GatewayConnection connection)
+    {
+        foreach (var candidate in ConnectionList)
+        {
+            if (ReferenceEquals(candidate.Player, player))
+            {
+                connection = candidate;
+                return true;
+            }
+        }
+
+        connection = null!;
+        return false;
     }
 
     private void Zones_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)

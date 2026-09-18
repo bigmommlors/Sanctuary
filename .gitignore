@@ -10,6 +10,10 @@ client/
 # Sqlite DBs
 *.db*
 
+# Generated Bandit local test/build output folders
+bin/bandit-*/
+**/bandit-*-test/
+
 # User-specific files
 *.rsuser
 *.suo

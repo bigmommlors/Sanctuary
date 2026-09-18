@@ -6,6 +6,7 @@ using Sanctuary.Core.IO;
 namespace Sanctuary.Game.Resources.Definitions.Zones;
 
 [JsonDerivedType(typeof(StartingZoneDefinition), "Starting")]
+[JsonDerivedType(typeof(InstanceZoneDefinition), "Instance")]
 public abstract class BaseZoneDefinition
 {
     public int Id { get; set; }

@@ -340,6 +340,7 @@ public static class PacketReaderExtensions
                 15 => "MiniGameMessagePacket",
                 16 => "MiniGameInfoPacket",
                 18 => "MiniGameGameOverPacket",
+                19 => "MiniGameStateRemovePacket",
                 20 => "MiniGameUpdateGameTimeScalar",
                 21 => "MiniGameStarsEarnedPacket",
                 22 => "MiniGameRewardStatusPacket",

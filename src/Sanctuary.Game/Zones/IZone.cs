@@ -13,6 +13,9 @@ namespace Sanctuary.Game.Zones;
 public interface IZone : IScriptableZone
 {
     int DefinitionId { get; }
+    string? Sky { get; }
+    Vector4 SpawnPosition { get; }
+    Quaternion SpawnRotation { get; }
     #region Events
 
     void OnStart();

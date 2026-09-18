@@ -1,0 +1,266 @@
+diff --git a/src/Sanctuary.Gateway/Handlers/PacketTunneledClientPacketHandler.cs b/src/Sanctuary.Gateway/Handlers/PacketTunneledClientPacketHandler.cs
+index 0b80995..0628e13 100644
+--- a/src/Sanctuary.Gateway/Handlers/PacketTunneledClientPacketHandler.cs
++++ b/src/Sanctuary.Gateway/Handlers/PacketTunneledClientPacketHandler.cs
+@@ -43,6 +43,7 @@ public static class PacketTunneledClientPacketHandler
+             PacketClientIsReady.OpCode => PacketClientIsReadyHandler.HandlePacket(connection),
+             BaseChatPacket.OpCode => BaseChatPacketHandler.HandlePacket(connection, reader),
+             BaseCommandPacket.OpCode => BaseCommandPacketHandler.HandlePacket(connection, reader),
++            BaseActivityServicePacket.OpCode => BaseActivityServicePacketHandler.HandlePacket(connection, reader, 2),
+             BasePlayerUpdatePacket.OpCode => BasePlayerUpdatePacketHandler.HandlePacket(connection, reader),
+             BaseAbilityPacket.OpCode => BaseAbilityPacketHandler.HandlePacket(connection, reader),
+             BaseInventoryPacket.OpCode => BaseInventoryPacketHandler.HandlePacket(connection, reader),
+diff --git a/src/Sanctuary.Gateway/Handlers/PacketTunneledClientWorldPacketHandler.cs b/src/Sanctuary.Gateway/Handlers/PacketTunneledClientWorldPacketHandler.cs
+index eb634ce..4f54348 100644
+--- a/src/Sanctuary.Gateway/Handlers/PacketTunneledClientWorldPacketHandler.cs
++++ b/src/Sanctuary.Gateway/Handlers/PacketTunneledClientWorldPacketHandler.cs
+@@ -40,6 +40,7 @@ public static class PacketTunneledClientWorldPacketHandler
+         var handled = opCode switch
+         {
+             BaseCommandPacket.OpCode => BaseCommandPacketHandler.HandlePacket(connection, reader),
++            BaseActivityServicePacket.OpCode => BaseActivityServicePacketHandler.HandlePacket(connection, reader, 1),
+             PacketWorldTeleportRequest.OpCode => PacketWorldTeleportRequestHandler.HandlePacket(connection, packet.Payload),
+             PacketBaseInGamePurchase.OpCode => PacketBaseInGamePurchaseHandler.HandlePacket(connection, reader),
+             PacketSetLocale.OpCode => PacketSetLocaleHandler.HandlePacket(connection, packet.Payload),
+diff --git a/src/Sanctuary.Packet/BaseActivityServicePacket/BaseActivityPacket/ActivityPacketJoinActivityRequest.cs b/src/Sanctuary.Packet/BaseActivityServicePacket/BaseActivityPacket/ActivityPacketJoinActivityRequest.cs
+new file mode 100644
+index 0000000..bb0c932
+--- /dev/null
++++ b/src/Sanctuary.Packet/BaseActivityServicePacket/BaseActivityPacket/ActivityPacketJoinActivityRequest.cs
+@@ -0,0 +1,35 @@
++﻿using System;
++
++using Sanctuary.Core.IO;
++
++namespace Sanctuary.Packet;
++
++public class ActivityPacketJoinActivityRequest : BaseActivityPacket, IDeserializable<ActivityPacketJoinActivityRequest>
++{
++    public new const byte OpCode = 2;
++
++    public int ActivityId;
++    public int TimezoneOffset;
++
++    public ActivityPacketJoinActivityRequest() : base(OpCode)
++    {
++    }
++
++    public static bool TryDeserialize(ReadOnlySpan<byte> data, out ActivityPacketJoinActivityRequest value)
++    {
++        value = new ActivityPacketJoinActivityRequest();
++
++        var reader = new PacketReader(data);
++
++        if (!value.TryRead(ref reader))
++            return false;
++
++        if (!reader.TryRead(out value.ActivityId))
++            return false;
++
++        if (!reader.TryRead(out value.TimezoneOffset))
++            return false;
++
++        return reader.RemainingLength == 0;
++    }
++}
+\ No newline at end of file
+diff --git a/src/Sanctuary.Gateway/Handlers/BaseActivityServicePacketHandler.cs b/src/Sanctuary.Gateway/Handlers/BaseActivityServicePacketHandler.cs
+new file mode 100644
+index 0000000..4948810
+--- /dev/null
++++ b/src/Sanctuary.Gateway/Handlers/BaseActivityServicePacketHandler.cs
+@@ -0,0 +1,44 @@
++﻿using System;
++
++using Microsoft.Extensions.DependencyInjection;
++using Microsoft.Extensions.Logging;
++
++using Sanctuary.Core.IO;
++using Sanctuary.Packet;
++using Sanctuary.Packet.Common.Attributes;
++
++namespace Sanctuary.Gateway.Handlers;
++
++[PacketHandler]
++public static class BaseActivityServicePacketHandler
++{
++    private static ILogger _logger = null!;
++
++    public static void ConfigureServices(IServiceProvider serviceProvider)
++    {
++        var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
++        _logger = loggerFactory.CreateLogger(nameof(BaseActivityServicePacketHandler));
++    }
++
++    public static bool HandlePacket(GatewayConnection connection, PacketReader reader, int serverType)
++    {
++        if (!reader.TryRead(out byte opCode))
++        {
++            _logger.LogError("Failed to read opcode from packet. ( Data: {data} )", Convert.ToHexString(reader.Span));
++            return false;
++        }
++
++        return opCode switch
++        {
++            BaseActivityPacket.OpCode => BaseActivityPacketHandler.HandlePacket(connection, reader, serverType),
++            _ => LogUnhandled(opCode, reader, serverType)
++        };
++    }
++
++    private static bool LogUnhandled(byte opCode, PacketReader reader, int serverType)
++    {
++        _logger.LogWarning("Unhandled activity-service request: family=167, branch={Branch}, ServerType={ServerType}, payload={Payload}",
++            opCode, serverType, Convert.ToHexString(reader.Span));
++        return false;
++    }
++}
+diff --git a/src/Sanctuary.Gateway/Handlers/BaseActivityServicePacket/BaseActivityPacketHandler.cs b/src/Sanctuary.Gateway/Handlers/BaseActivityServicePacket/BaseActivityPacketHandler.cs
+new file mode 100644
+index 0000000..52bb1e7
+--- /dev/null
++++ b/src/Sanctuary.Gateway/Handlers/BaseActivityServicePacket/BaseActivityPacketHandler.cs
+@@ -0,0 +1,44 @@
++﻿using System;
++
++using Microsoft.Extensions.DependencyInjection;
++using Microsoft.Extensions.Logging;
++
++using Sanctuary.Core.IO;
++using Sanctuary.Packet;
++using Sanctuary.Packet.Common.Attributes;
++
++namespace Sanctuary.Gateway.Handlers;
++
++[PacketHandler]
++public static class BaseActivityPacketHandler
++{
++    private static ILogger _logger = null!;
++
++    public static void ConfigureServices(IServiceProvider serviceProvider)
++    {
++        var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
++        _logger = loggerFactory.CreateLogger(nameof(BaseActivityPacketHandler));
++    }
++
++    public static bool HandlePacket(GatewayConnection connection, PacketReader reader, int serverType)
++    {
++        if (!reader.TryRead(out byte opCode))
++        {
++            _logger.LogError("Failed to read opcode from packet. ( Data: {data} )", Convert.ToHexString(reader.Span));
++            return false;
++        }
++
++        return opCode switch
++        {
++            ActivityPacketJoinActivityRequest.OpCode => ActivityPacketJoinActivityRequestHandler.HandlePacket(connection, reader.Span, serverType),
++            _ => LogUnhandled(opCode, reader, serverType)
++        };
++    }
++
++    private static bool LogUnhandled(byte opCode, PacketReader reader, int serverType)
++    {
++        _logger.LogWarning("Unhandled activity request: family=167, branch=1, message={Message}, ServerType={ServerType}, payload={Payload}",
++            opCode, serverType, Convert.ToHexString(reader.Span));
++        return false;
++    }
++}
+diff --git a/src/Sanctuary.Gateway/Handlers/BaseActivityServicePacket/BaseActivityPacket/ActivityPacketJoinActivityRequestHandler.cs b/src/Sanctuary.Gateway/Handlers/BaseActivityServicePacket/BaseActivityPacket/ActivityPacketJoinActivityRequestHandler.cs
+new file mode 100644
+index 0000000..23d80be
+--- /dev/null
++++ b/src/Sanctuary.Gateway/Handlers/BaseActivityServicePacket/BaseActivityPacket/ActivityPacketJoinActivityRequestHandler.cs
+@@ -0,0 +1,50 @@
++using System;
++
++using Microsoft.Extensions.DependencyInjection;
++using Microsoft.Extensions.Logging;
++
++using Sanctuary.Game;
++using Sanctuary.Packet;
++using Sanctuary.Packet.Common.Attributes;
++
++namespace Sanctuary.Gateway.Handlers;
++
++[PacketHandler]
++public static class ActivityPacketJoinActivityRequestHandler
++{
++    private static ILogger _logger = null!;
++    private static IResourceManager _resourceManager = null!;
++
++    public static void ConfigureServices(IServiceProvider serviceProvider)
++    {
++        _logger = serviceProvider.GetRequiredService<ILoggerFactory>()
++            .CreateLogger(nameof(ActivityPacketJoinActivityRequestHandler));
++        _resourceManager = serviceProvider.GetRequiredService<IResourceManager>();
++    }
++
++    public static bool HandlePacket(GatewayConnection connection, ReadOnlySpan<byte> data, int serverType)
++    {
++        if (!ActivityPacketJoinActivityRequest.TryDeserialize(data, out var packet))
++        {
++            _logger.LogError("Failed to deserialize ActivityPacketJoinActivityRequest: ServerType={ServerType}, payload={Payload}",
++                serverType, Convert.ToHexString(data));
++            return false;
++        }
++
++        _logger.LogInformation("Received ActivityPacketJoinActivityRequest: family=167, branch=1, message=2, ActivityId={ActivityId}, TimezoneOffset={TimezoneOffset}, ServerType={ServerType}, connection={Connection}, payload={Payload}",
++            packet.ActivityId, packet.TimezoneOffset, serverType, connection, Convert.ToHexString(data));
++
++        if (!_resourceManager.ClientActivityDefinitions.TryGetValue(packet.ActivityId, out var definition))
++        {
++            _logger.LogWarning("Activity join unsupported: ActivityId={ActivityId} has no loaded definition. No response sent.", packet.ActivityId);
++            return true;
++        }
++
++        _logger.LogWarning("Activity join unsupported: ActivityId={ActivityId}, DefinitionServerType={DefinitionServerType}, AppSystemId={AppSystemId}, Category={Category}, NameId={NameId}, DisplayNameId={DisplayNameId}. No response sent; launch flow is not implemented.",
++            packet.ActivityId, definition.ServerType, definition.AppSystemId, definition.Category, definition.NameId, definition.DisplayNameId);
++
++        // Recognition is not an acceptance: do not send launch/readiness packets without
++        // a supported activity implementation. Existing unhandled-packet logging captures follow-ups.
++        return true;
++    }
++}
+diff --git a/src/Sanctuary.Game.Tests/ActivityJoinPacketTests.cs b/src/Sanctuary.Game.Tests/ActivityJoinPacketTests.cs
+new file mode 100644
+index 0000000..4999077
+--- /dev/null
++++ b/src/Sanctuary.Game.Tests/ActivityJoinPacketTests.cs
+@@ -0,0 +1,38 @@
++using System;
++
++using Microsoft.VisualStudio.TestTools.UnitTesting;
++
++using Sanctuary.Packet;
++
++namespace Sanctuary.Game.Tests;
++
++[TestClass]
++public sealed class ActivityJoinPacketTests
++{
++    [TestMethod]
++    public void JoinRequest_DecodesCapturedWorldTunnelAndSignedTimezoneOffset()
++    {
++        var capture = Convert.FromHexString("0600010C000000A70001021D000000909DFFFF");
++        Assert.IsTrue(PacketTunneledClientWorldPacket.TryDeserialize(capture, out var tunnel));
++        CollectionAssert.AreEqual(Convert.FromHexString("A70001021D000000909DFFFF"), tunnel.Payload);
++        Assert.IsTrue(ActivityPacketJoinActivityRequest.TryDeserialize(tunnel.Payload, out var request));
++        Assert.AreEqual(29, request.ActivityId);
++        Assert.AreEqual(-25200, request.TimezoneOffset);
++    }
++
++    [TestMethod]
++    public void JoinRequest_RejectsTruncationWrongHeadersAndTrailingBytes()
++    {
++        var capture = Convert.FromHexString("A70001021D000000909DFFFF");
++        for (var length = 0; length < capture.Length; length++)
++            Assert.IsFalse(ActivityPacketJoinActivityRequest.TryDeserialize(capture.AsSpan(0, length), out _));
++
++        for (var index = 0; index < 4; index++)
++        {
++            var invalid = (byte[])capture.Clone();
++            invalid[index] ^= 0x10;
++            Assert.IsFalse(ActivityPacketJoinActivityRequest.TryDeserialize(invalid, out _));
++        }
++        Assert.IsFalse(ActivityPacketJoinActivityRequest.TryDeserialize([.. capture, 0], out _));
++    }
++}

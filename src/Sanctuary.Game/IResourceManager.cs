@@ -29,6 +29,8 @@ public interface IResourceManager
     StoreBundleCategoryNodeCollection StoreBundleCategories { get; }
     StoreBundleCategoryGroupDefinitionCollection StoreBundleCategoryGroups { get; }
 
+    ClientActivityDefinitionCollection ClientActivityDefinitions { get; }
+
     ZoneDefinitionCollection Zones { get; }
     MountDefinitionCollection Mounts { get; }
     PlayerTitleCollection PlayerTitles { get; }

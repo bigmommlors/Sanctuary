@@ -59,6 +59,7 @@ public abstract class BaseZone : IZone, IDisposable
     public int Id { get; init; }
     public int DefinitionId => _zoneDefinition.Id;
     public string Name => _zoneDefinition.Name;
+    public string? Sky => _zoneDefinition.Sky;
     public ILogger Logger => _logger;
 
     public Vector4 SpawnPosition => _zoneDefinition.SpawnPosition;

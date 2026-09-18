@@ -1,0 +1,515 @@
+diff --git a/src/Sanctuary.Gateway/Handlers/PacketTunneledClientWorldPacketHandler.cs b/src/Sanctuary.Gateway/Handlers/PacketTunneledClientWorldPacketHandler.cs
+index d928e32..eb634ce 100644
+--- a/src/Sanctuary.Gateway/Handlers/PacketTunneledClientWorldPacketHandler.cs
++++ b/src/Sanctuary.Gateway/Handlers/PacketTunneledClientWorldPacketHandler.cs
+@@ -44,6 +44,7 @@ public static class PacketTunneledClientWorldPacketHandler
+             PacketBaseInGamePurchase.OpCode => PacketBaseInGamePurchaseHandler.HandlePacket(connection, reader),
+             PacketSetLocale.OpCode => PacketSetLocaleHandler.HandlePacket(connection, packet.Payload),
+             BaseLobbyGameDefinitionPacket.OpCode => BaseLobbyGameDefinitionPacketHandler.HandlePacket(connection, reader),
++            BaseMatchmakingPacket.OpCode => BaseMatchmakingPacketHandler.HandlePacket(connection, reader),
+             BaseHousingPacket.OpCode => BaseHousingPacketHandler.HandlePacket(connection, reader),
+             BaseGuildPacket.OpCode => BaseGuildPacketHandler.HandlePacket(connection, reader),
+             BaseFotomatPacket.OpCode => BaseFotomatPacketHandler.HandlePacket(connection, reader),
+@@ -61,4 +62,4 @@ public static class PacketTunneledClientWorldPacketHandler
+ 
+         return handled;
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/src/Sanctuary.Packet/BaseMatchmakingPacket.cs b/src/Sanctuary.Packet/BaseMatchmakingPacket.cs
+new file mode 100644
+index 0000000..6d42b5f
+--- /dev/null
++++ b/src/Sanctuary.Packet/BaseMatchmakingPacket.cs
+@@ -0,0 +1,32 @@
++using Sanctuary.Core.IO;
++
++namespace Sanctuary.Packet;
++
++public class BaseMatchmakingPacket
++{
++    public const short OpCode = 141;
++
++    private short SubOpCode;
++
++    public BaseMatchmakingPacket(short subOpCode)
++    {
++        SubOpCode = subOpCode;
++    }
++
++    public virtual void Write(PacketWriter writer)
++    {
++        writer.Write(OpCode);
++        writer.Write(SubOpCode);
++    }
++
++    public bool TryRead(ref PacketReader reader)
++    {
++        if (!reader.TryRead(out short opCode) || opCode != OpCode)
++            return false;
++
++        if (!reader.TryRead(out short subOpCode) || subOpCode != SubOpCode)
++            return false;
++
++        return true;
++    }
++}
+diff --git a/src/Sanctuary.Packet/BaseMatchmakingPacket/ListQueuesRequestPacket.cs b/src/Sanctuary.Packet/BaseMatchmakingPacket/ListQueuesRequestPacket.cs
+new file mode 100644
+index 0000000..27bdc5c
+--- /dev/null
++++ b/src/Sanctuary.Packet/BaseMatchmakingPacket/ListQueuesRequestPacket.cs
+@@ -0,0 +1,31 @@
++using System;
++
++using Sanctuary.Core.IO;
++
++namespace Sanctuary.Packet;
++
++public class ListQueuesRequestPacket : BaseMatchmakingPacket, IDeserializable<ListQueuesRequestPacket>
++{
++    public new const short OpCode = 1;
++
++    public ulong Guid;
++
++    public ListQueuesRequestPacket() : base(OpCode)
++    {
++    }
++
++    public static bool TryDeserialize(ReadOnlySpan<byte> data, out ListQueuesRequestPacket value)
++    {
++        value = new ListQueuesRequestPacket();
++
++        var reader = new PacketReader(data);
++
++        if (!value.TryRead(ref reader))
++            return false;
++
++        if (!reader.TryRead(out value.Guid))
++            return false;
++
++        return reader.RemainingLength == 0;
++    }
++}
+diff --git a/src/Sanctuary.Packet/BaseMatchmakingPacket/ListQueuesResponsePacket.cs b/src/Sanctuary.Packet/BaseMatchmakingPacket/ListQueuesResponsePacket.cs
+new file mode 100644
+index 0000000..673dcd2
+--- /dev/null
++++ b/src/Sanctuary.Packet/BaseMatchmakingPacket/ListQueuesResponsePacket.cs
+@@ -0,0 +1,32 @@
++using System.Collections.Generic;
++
++using Sanctuary.Core.IO;
++using Sanctuary.Packet.Common;
++
++namespace Sanctuary.Packet;
++
++public class ListQueuesResponsePacket : BaseMatchmakingPacket, ISerializablePacket
++{
++    public new const short OpCode = 2;
++
++    public ulong Guid;
++
++    public List<MatchmakingQueueDefinition> Queues = [];
++
++    public ListQueuesResponsePacket() : base(OpCode)
++    {
++    }
++
++    public byte[] Serialize()
++    {
++        using var writer = new PacketWriter();
++
++        Write(writer);
++
++        writer.Write(Guid);
++
++        writer.Write(Queues);
++
++        return writer.Buffer;
++    }
++}
+diff --git a/src/Sanctuary.Packet.Common/MatchmakingQueueDefinition.cs b/src/Sanctuary.Packet.Common/MatchmakingQueueDefinition.cs
+new file mode 100644
+index 0000000..a043b22
+--- /dev/null
++++ b/src/Sanctuary.Packet.Common/MatchmakingQueueDefinition.cs
+@@ -0,0 +1,75 @@
++using Sanctuary.Core.IO;
++
++namespace Sanctuary.Packet.Common;
++
++public class MatchmakingQueueDefinition : ISerializableType
++{
++    public int Id;
++
++    public int NameId;
++
++    public int MatchType;
++
++    public int MinPlayers;
++    public int MaxPlayers;
++
++    public int MinTeams;
++    public int MaxTeams;
++
++    public int MaxGameStartDelay;
++
++    public int Param1;
++    public int Param2;
++    public int Param3;
++    public int Param4;
++    public int Param5;
++    public int Param6;
++    public int Param7;
++
++    public int EncounterDescriptionId;
++
++    public int EncounterIcon;
++
++    public int Unknown;
++    public int Unknown2;
++
++    public bool MemberOnly;
++
++    public bool Unknown3;
++
++    public void Serialize(PacketWriter writer)
++    {
++        writer.Write(Id);
++
++        writer.Write(NameId);
++
++        writer.Write(MatchType);
++
++        writer.Write(MinPlayers);
++        writer.Write(MaxPlayers);
++
++        writer.Write(MinTeams);
++        writer.Write(MaxTeams);
++
++        writer.Write(MaxGameStartDelay);
++
++        writer.Write(Param1);
++        writer.Write(Param2);
++        writer.Write(Param3);
++        writer.Write(Param4);
++        writer.Write(Param5);
++        writer.Write(Param6);
++        writer.Write(Param7);
++
++        writer.Write(EncounterDescriptionId);
++
++        writer.Write(EncounterIcon);
++
++        writer.Write(Unknown);
++        writer.Write(Unknown2);
++
++        writer.Write(MemberOnly);
++
++        writer.Write(Unknown3);
++    }
++}
+diff --git a/src/Sanctuary.Gateway/Handlers/BaseMatchmakingPacketHandler.cs b/src/Sanctuary.Gateway/Handlers/BaseMatchmakingPacketHandler.cs
+new file mode 100644
+index 0000000..bfee448
+--- /dev/null
++++ b/src/Sanctuary.Gateway/Handlers/BaseMatchmakingPacketHandler.cs
+@@ -0,0 +1,44 @@
++using System;
++
++using Microsoft.Extensions.DependencyInjection;
++using Microsoft.Extensions.Logging;
++
++using Sanctuary.Core.IO;
++using Sanctuary.Packet;
++using Sanctuary.Packet.Common.Attributes;
++
++namespace Sanctuary.Gateway.Handlers;
++
++[PacketHandler]
++public static class BaseMatchmakingPacketHandler
++{
++    private static ILogger _logger = null!;
++
++    public static void ConfigureServices(IServiceProvider serviceProvider)
++    {
++        var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
++        _logger = loggerFactory.CreateLogger(nameof(BaseMatchmakingPacketHandler));
++    }
++
++    public static bool HandlePacket(GatewayConnection connection, PacketReader reader)
++    {
++        if (!reader.TryRead(out short opCode))
++        {
++            _logger.LogError("Failed to read opcode from packet. ( Data: {data} )", Convert.ToHexString(reader.Span));
++            return false;
++        }
++
++        return opCode switch
++        {
++            ListQueuesRequestPacket.OpCode => ListQueuesRequestPacketHandler.HandlePacket(connection, reader.Span),
++            _ => LogUnhandled(opCode, reader)
++        };
++    }
++
++    private static bool LogUnhandled(short subOpCode, PacketReader reader)
++    {
++        _logger.LogWarning("Unhandled matchmaking request: family=141, subopcode={sub}, payload={hex}.",
++            subOpCode, Convert.ToHexString(reader.Span));
++        return false;
++    }
++}
+diff --git a/src/Sanctuary.Gateway/Handlers/BaseMatchmakingPacket/ListQueuesRequestPacketHandler.cs b/src/Sanctuary.Gateway/Handlers/BaseMatchmakingPacket/ListQueuesRequestPacketHandler.cs
+new file mode 100644
+index 0000000..480d9c4
+--- /dev/null
++++ b/src/Sanctuary.Gateway/Handlers/BaseMatchmakingPacket/ListQueuesRequestPacketHandler.cs
+@@ -0,0 +1,182 @@
++using System;
++
++using Microsoft.Extensions.DependencyInjection;
++using Microsoft.Extensions.Logging;
++
++using Sanctuary.Packet;
++using Sanctuary.Packet.Common;
++using Sanctuary.Packet.Common.Attributes;
++
++namespace Sanctuary.Gateway.Handlers;
++
++[PacketHandler]
++public static class ListQueuesRequestPacketHandler
++{
++    private static ILogger _logger = null!;
++
++    public static void ConfigureServices(IServiceProvider serviceProvider)
++    {
++        var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
++        _logger = loggerFactory.CreateLogger(nameof(ListQueuesRequestPacketHandler));
++
++    }
++
++    public static bool HandlePacket(GatewayConnection connection, ReadOnlySpan<byte> data)
++    {
++        if (!ListQueuesRequestPacket.TryDeserialize(data, out var packet))
++        {
++            _logger.LogError("Failed to deserialize {packet}.", nameof(ListQueuesRequestPacket));
++            return false;
++        }
++
++        _logger.LogDebug("Received ListQueuesRequest GUID={guid}.", packet.Guid);
++
++        var listQueuesResponsePacket = new ListQueuesResponsePacket();
++
++        listQueuesResponsePacket.Guid = packet.Guid;
++
++        // Preserve all values, including Param*/Unknown*, from origin/minigame at
++        // bc0982bf7bb9893fbc72f1ab5791f904b82b38c7. Their unknown meanings are not inferred.
++        // Advertising these reference queues does not implement joining or launching them.
++        var queues = new MatchmakingQueueDefinition[]
++        {
++            new MatchmakingQueueDefinition
++            {
++                // Pirate's Plunder
++                Id = 5,
++                NameId = 427834,
++                MatchType = 13,
++                MinPlayers = 1,
++                MaxPlayers = 5,
++                MinTeams = 1,
++                MaxTeams = 1,
++                MaxGameStartDelay = 30,
++                Param1 = 0,
++                Param2 = 0,
++                Param3 = 0,
++                Param4 = 0,
++                Param5 = 420998,
++                Param6 = 30434,
++                Param7 = 1,
++                EncounterDescriptionId = 420998,
++                EncounterIcon = 30434,
++                Unknown = 0,
++                Unknown2 = 26,
++                MemberOnly = true,
++                Unknown3 = true,
++            },
++            new MatchmakingQueueDefinition
++            {
++                // Soccer
++                Id = 11,
++                NameId = 31030,
++                MatchType = 12,
++                MinPlayers = 1,
++                MaxPlayers = 3,
++                MinTeams = 1,
++                MaxTeams = 2,
++                MaxGameStartDelay = 120,
++                Param1 = 0,
++                Param2 = 3,
++                Param3 = 0,
++                Param4 = 8,
++                Param5 = 37947,
++                Param6 = 20992,
++                Param7 = 4,
++                EncounterDescriptionId = 37947,
++                EncounterIcon = 20992,
++                Unknown = 8,
++                Unknown2 = 0,
++                MemberOnly = false,
++                Unknown3 = true,
++            },
++            new MatchmakingQueueDefinition
++            {
++                // Kart Racing
++                Id = 21,
++                NameId = 426304,
++                MatchType = 10,
++                MinPlayers = 1,
++                MaxPlayers = 5,
++                MinTeams = 1,
++                MaxTeams = 1,
++                MaxGameStartDelay = 120,
++                Param1 = 1,
++                Param2 = 3,
++                Param3 = 0,
++                Param4 = 5,
++                Param5 = 407515,
++                Param6 = 20991,
++                Param7 = 2,
++                EncounterDescriptionId = 407515,
++                EncounterIcon = 20991,
++                Unknown = 5,
++                Unknown2 = 0,
++                MemberOnly = false,
++                Unknown3 = true,
++            },
++            new MatchmakingQueueDefinition
++            {
++                // Demo Derby
++                Id = 31,
++                NameId = 382789,
++                MatchType = 11,
++                MinPlayers = 1,
++                MaxPlayers = 5,
++                MinTeams = 1,
++                MaxTeams = 1,
++                MaxGameStartDelay = 120,
++                Param1 = 0,
++                Param2 = 0,
++                Param3 = 0,
++                Param4 = 7,
++                Param5 = 37942,
++                Param6 = 9871,
++                Param7 = 3,
++                EncounterDescriptionId = 37942,
++                EncounterIcon = 9871,
++                Unknown = 7,
++                Unknown2 = 0,
++                MemberOnly = false,
++                Unknown3 = true,
++            },
++            new MatchmakingQueueDefinition
++            {
++                // Snowball Fighting
++                Id = 51,
++                NameId = 419545,
++                MatchType = 4,
++                MinPlayers = 4,
++                MaxPlayers = 4,
++                MinTeams = 1,
++                MaxTeams = 1,
++                MaxGameStartDelay = 0,
++                Param1 = 369,
++                Param2 = 0,
++                Param3 = 0,
++                Param4 = 0,
++                Param5 = 0,
++                Param6 = 0,
++                Param7 = 0,
++                EncounterDescriptionId = 419546,
++                EncounterIcon = 282,
++                Unknown = 1,
++                Unknown2 = 0,
++                MemberOnly = false,
++                Unknown3 = true,
++            }
++        };
++
++        listQueuesResponsePacket.Queues.AddRange(queues);
++
++        _logger.LogDebug("Returning {count} matchmaking queues for GUID={guid}.", queues.Length, packet.Guid);
++        foreach (var queue in queues)
++            _logger.LogTrace("Matchmaking queue ID={id}, NameId={nameId}.", queue.Id, queue.NameId);
++
++        connection.SendTunneled(listQueuesResponsePacket);
++
++        _logger.LogDebug("ListQueuesResponse sent to transport: GUID={guid}, family=141, subopcode=2, queues={count}.", packet.Guid, queues.Length);
++
++        return true;
++    }
++}
+diff --git a/src/Sanctuary.Game.Tests/MatchmakingPacketTests.cs b/src/Sanctuary.Game.Tests/MatchmakingPacketTests.cs
+new file mode 100644
+index 0000000..cb5a84e
+--- /dev/null
++++ b/src/Sanctuary.Game.Tests/MatchmakingPacketTests.cs
+@@ -0,0 +1,58 @@
++using System;
++using System.Buffers.Binary;
++
++using Microsoft.VisualStudio.TestTools.UnitTesting;
++
++using Sanctuary.Packet;
++using Sanctuary.Packet.Common;
++
++namespace Sanctuary.Game.Tests;
++
++[TestClass]
++public sealed class MatchmakingPacketTests
++{
++    [TestMethod]
++    public void Request_ParsesCapturedGuidAndRejectsInvalidFrames()
++    {
++        var captured = Convert.FromHexString("8D0001001100000000000000");
++        Assert.IsTrue(ListQueuesRequestPacket.TryDeserialize(captured, out var request));
++        Assert.AreEqual(17UL, request.Guid);
++
++        for (var length = 0; length < captured.Length; length++)
++            Assert.IsFalse(ListQueuesRequestPacket.TryDeserialize(captured.AsSpan(0, length), out _));
++
++        var wrongFamily = (byte[])captured.Clone();
++        wrongFamily[0] = 192;
++        Assert.IsFalse(ListQueuesRequestPacket.TryDeserialize(wrongFamily, out _));
++
++        var wrongSubopcode = (byte[])captured.Clone();
++        wrongSubopcode[2] = 2;
++        Assert.IsFalse(ListQueuesRequestPacket.TryDeserialize(wrongSubopcode, out _));
++        Assert.IsFalse(ListQueuesRequestPacket.TryDeserialize([.. captured, 0], out _));
++    }
++
++    [TestMethod]
++    public void Response_UsesMatchmakingHeaderAndReferenceQueueLayout()
++    {
++        var response = new ListQueuesResponsePacket { Guid = 17 };
++        response.Queues.Add(new MatchmakingQueueDefinition
++        {
++            Id = 5, NameId = 427834, MatchType = 13,
++            MinPlayers = 1, MaxPlayers = 5, MinTeams = 1, MaxTeams = 1,
++            MaxGameStartDelay = 30, Param5 = 420998, Param6 = 30434, Param7 = 1,
++            EncounterDescriptionId = 420998, EncounterIcon = 30434,
++            Unknown2 = 26, MemberOnly = true, Unknown3 = true
++        });
++
++        var bytes = response.Serialize();
++        CollectionAssert.AreEqual(Convert.FromHexString("8D000200110000000000000001000000"), bytes[..16]);
++
++        // Reference row: nineteen little-endian Int32 fields followed by two one-byte bools.
++        int[] expected = [5, 427834, 13, 1, 5, 1, 1, 30, 0, 0, 0, 0, 420998, 30434, 1, 420998, 30434, 0, 26];
++        Assert.AreEqual(94, bytes.Length);
++        for (var i = 0; i < expected.Length; i++)
++            Assert.AreEqual(expected[i], BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(16 + i * 4, 4)));
++        Assert.AreEqual((byte)1, bytes[92]);
++        Assert.AreEqual((byte)1, bytes[93]);
++    }
++}

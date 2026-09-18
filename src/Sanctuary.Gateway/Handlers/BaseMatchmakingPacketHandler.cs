@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -10,19 +10,19 @@ using Sanctuary.Packet.Common.Attributes;
 namespace Sanctuary.Gateway.Handlers;
 
 [PacketHandler]
-public static class WallOfDataBasePacketHandler
+public static class BaseMatchmakingPacketHandler
 {
     private static ILogger _logger = null!;
 
     public static void ConfigureServices(IServiceProvider serviceProvider)
     {
         var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-        _logger = loggerFactory.CreateLogger(nameof(WallOfDataBasePacketHandler));
+        _logger = loggerFactory.CreateLogger(nameof(BaseMatchmakingPacketHandler));
     }
 
     public static bool HandlePacket(GatewayConnection connection, PacketReader reader)
     {
-        if (!reader.TryRead(out byte opCode))
+        if (!reader.TryRead(out short opCode))
         {
             _logger.LogError("Failed to read opcode from packet. ( Data: {data} )", Convert.ToHexString(reader.Span));
             return false;
@@ -30,18 +30,15 @@ public static class WallOfDataBasePacketHandler
 
         return opCode switch
         {
-            WallOfDataPlayerKeyboardPacket.OpCode => WallOfDataPlayerKeyboardPacketHandler.HandlePacket(connection, reader.Span),
-            WallOfDataUIEventPacket.OpCode => WallOfDataUIEventPacketHandler.HandlePacket(connection, reader.Span),
-            _ => LogUnhandledSubOp(opCode, reader)
+            ListQueuesRequestPacket.OpCode => ListQueuesRequestPacketHandler.HandlePacket(connection, reader.Span),
+            _ => LogUnhandled(opCode, reader)
         };
     }
 
-    private static bool LogUnhandledSubOp(byte subOpCode, PacketReader reader)
+    private static bool LogUnhandled(short subOpCode, PacketReader reader)
     {
-        _logger.LogDebug(
-            "Unhandled WallOfData subopcode={SubOp} payload={Payload}",
-            subOpCode,
-            Convert.ToHexString(reader.Span));
+        _logger.LogWarning("Unhandled matchmaking request: family=141, subopcode={sub}, payload={hex}.",
+            subOpCode, Convert.ToHexString(reader.Span));
         return false;
     }
 }
