@@ -140,6 +140,29 @@ public static class FarmingPrototypeConfig
 
     public static Vector4 DebugTreePosition => new(DebugTreeX, DebugTreeY, DebugTreeZ, 1f);
 
+    // ---------------------------------------------------------------------------
+    // Physical Tool Shed (temporary runtime NPC — NOT FarmObstacles DB).
+    // Models.txt 3415 = farming_tool_shed_lv1_01.adr ("farming - housing item - tool shed").
+    // Do NOT use Npcs.json Id 3415 (courier human_m_courier_evil) via TrySpawnNpc(3415).
+    // Auto-spawns on !farmtest enter; click → SendExperimentalOpenToolshed (188/26).
+    // ---------------------------------------------------------------------------
+
+    /// <summary>PROVEN visual: farming_tool_shed_lv1_01.adr (Models.txt 3415).</summary>
+    public const int DebugToolShedModelId = 3415;
+
+    public const string DebugToolShedNpcName = "Tool Shed";
+
+    /// <summary>
+    /// Near private Wilds spawn/plot, clear of weed/rock/tree and crop plot.
+    /// Tweak freely if mesh clips or InteractRange feels wrong.
+    /// </summary>
+    public const float DebugToolShedX = 1365f;
+    public const float DebugToolShedY = 0f;
+    public const float DebugToolShedZ = 760f;
+    public const float DebugToolShedHeading = 0f;
+
+    public static Vector4 DebugToolShedPosition => new(DebugToolShedX, DebugToolShedY, DebugToolShedZ, 1f);
+
     /// <summary>Bumbleberry Seed (ClientItemDefinitions / CoinStoreItems).</summary>
     public const int SeedDefinitionId = 38715;
 

@@ -16,7 +16,7 @@ public class FarmTestChatCommand : IChatCommand
         "enter|leave|seed|status|grow|reset|tp|weed|weedremove|rock|rockremove|tree|treeremove|obstacles|obstaclesreset|toolshed|diganim";
 
     public string Description =>
-        "Wilds Farm private test (enter/leave) + Farnum harness helpers + persistent weed/rock/tree obstacles. EXPERIMENTAL toolshed / diganim.";
+        "Wilds Farm private test (enter/leave) + Farnum harness helpers + persistent weed/rock/tree obstacles. Physical Tool Shed on enter. EXPERIMENTAL toolshed / diganim.";
 
     public ChatCommandRole RequiredRole => ChatCommandRole.Admin;
 

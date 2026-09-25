@@ -33,6 +33,11 @@ public sealed class FarmingService : IFarmingService
     private readonly ConcurrentDictionary<int, Npc> _debugRocksByZoneId = new();
     private readonly ConcurrentDictionary<int, Npc> _debugTreesByZoneId = new();
     /// <summary>
+    /// Temporary physical Tool Shed (Models.txt 3415) per private Wilds zone. Not FarmObstacles.
+    /// </summary>
+    private readonly ConcurrentDictionary<int, Npc> _toolShedsByZoneId = new();
+
+    /// <summary>
     /// EXPERIMENTAL: in-flight dig→delayed rock clears keyed by private Wilds zone id.
     /// Prevents duplicate clicks; cancelled on leave/remove/reset.
     /// </summary>
@@ -172,6 +177,7 @@ public sealed class FarmingService : IFarmingService
         _wildsPlotsByZoneId[destination.Id] = runtime;
         RestorePlotVisualFromDb(runtime, characterId);
         SpawnUnclearedObstacles(destination, characterId);
+        SpawnToolShed(destination);
 
         var returnZoneName = player.Zone?.Name ?? _zoneManager.StartingZone.Name;
         var returnZoneId = player.Zone?.Id ?? _zoneManager.StartingZone.Id;
@@ -200,7 +206,7 @@ public sealed class FarmingService : IFarmingService
 
         message =
             $"Entered private Wilds Farm test ({FarmingPrototypeConfig.WildsZoneName}). " +
-            $"Plot {FarmingPrototypeConfig.WildsPlotKey} nearby. Uncleared obstacles auto-spawned. " +
+            $"Plot {FarmingPrototypeConfig.WildsPlotKey} nearby. Uncleared obstacles + Tool Shed auto-spawned. " +
             "Use !farmtest leave to return.";
         return true;
     }
@@ -255,6 +261,7 @@ public sealed class FarmingService : IFarmingService
         _debugWeedsByZoneId.TryRemove(instanceZoneId, out _);
         _debugRocksByZoneId.TryRemove(instanceZoneId, out _);
         _debugTreesByZoneId.TryRemove(instanceZoneId, out _);
+        DisposeToolShed(instanceZoneId);
 
         if (!_zoneManager.TryRemoveInstanceZone(instanceZoneId))
         {
@@ -739,6 +746,114 @@ public sealed class FarmingService : IFarmingService
             else
                 _logger.LogWarning("Auto-spawn tree skipped: {Message}", treeMsg);
         }
+    }
+
+    /// <summary>
+    /// Always spawn the physical Tool Shed for a private Wilds zone (not DB-gated).
+    /// </summary>
+    private void SpawnToolShed(IZone zone)
+    {
+        if (TrySpawnToolShedInZone(zone, out var shedMsg))
+            _logger.LogInformation("Auto-spawn Tool Shed: {Message}", shedMsg);
+        else
+            _logger.LogWarning("Auto-spawn Tool Shed skipped: {Message}", shedMsg);
+    }
+
+    private void DisposeToolShed(int zoneId)
+    {
+        if (!_toolShedsByZoneId.TryRemove(zoneId, out var shed))
+            return;
+
+        shed.InteractAction = null;
+        shed.Dispose();
+
+        _logger.LogInformation(
+            "Prototype Tool Shed disposed zone={ZoneId} guid={Guid}.",
+            zoneId, shed.Guid);
+    }
+
+    private bool TrySpawnToolShedInZone(IZone zone, out string message)
+    {
+        if (!_resourceManager.Models.ContainsKey(FarmingPrototypeConfig.DebugToolShedModelId))
+        {
+            message =
+                $"Tool Shed model {FarmingPrototypeConfig.DebugToolShedModelId} " +
+                $"({FarmingToolShedPrototype.ModelFileName}) missing from Models.txt.";
+            return false;
+        }
+
+        if (FarmingToolShedPrototype.ShouldSkipSpawnBecauseAlreadyPresent(
+                _toolShedsByZoneId.ContainsKey(zone.Id)))
+        {
+            message =
+                $"Tool Shed already present (model {FarmingPrototypeConfig.DebugToolShedModelId}). No duplicate.";
+            return false;
+        }
+
+        // Models.txt ModelId only — never zone.TrySpawnNpc(3415) (Npcs.json courier).
+        if (!zone.TryCreateNpc(null, out var shed))
+        {
+            message = "Failed to create Tool Shed NPC.";
+            return false;
+        }
+
+        shed.Name = FarmingPrototypeConfig.DebugToolShedNpcName;
+        shed.ModelId = FarmingPrototypeConfig.DebugToolShedModelId;
+        shed.Scale = 1f;
+        shed.Visible = true;
+        shed.IsInteractable = true;
+        shed.InteractRange = FarmingPrototypeConfig.InteractRange;
+        shed.CursorId = FarmingPrototypeConfig.CursorId;
+        shed.HideNamePlate = false;
+        shed.InteractAction = HandleToolShedInteract;
+
+        var heading = FarmingPrototypeConfig.DebugToolShedHeading;
+        var rotation = new Quaternion(MathF.Sin(heading), 0f, MathF.Cos(heading), 0f);
+        shed.UpdatePosition(FarmingPrototypeConfig.DebugToolShedPosition, rotation);
+
+        _toolShedsByZoneId[zone.Id] = shed;
+
+        _logger.LogInformation(
+            "Prototype Tool Shed spawned zone={ZoneId} guid={Guid} model={ModelId} asset={Asset} at ({X:0.##}, {Y:0.##}, {Z:0.##}).",
+            zone.Id, shed.Guid,
+            FarmingPrototypeConfig.DebugToolShedModelId,
+            FarmingToolShedPrototype.ModelFileName,
+            FarmingPrototypeConfig.DebugToolShedX,
+            FarmingPrototypeConfig.DebugToolShedY,
+            FarmingPrototypeConfig.DebugToolShedZ);
+
+        message =
+            $"Tool Shed spawned (model {FarmingPrototypeConfig.DebugToolShedModelId}) at " +
+            $"[{FarmingPrototypeConfig.DebugToolShedX}, {FarmingPrototypeConfig.DebugToolShedY}, {FarmingPrototypeConfig.DebugToolShedZ}]. " +
+            "Click to open Tool Shed UI.";
+        return true;
+    }
+
+    /// <summary>
+    /// Click → existing OpenToolshed 188/26 (same as !farmtest toolshed). Wilds farm only.
+    /// </summary>
+    private void HandleToolShedInteract(Player player)
+    {
+        if (!FarmingToolShedPrototype.ShouldOpenToolshedOnInteract(IsInWildsTestInstance(player)) ||
+            player.Zone is null)
+        {
+            return;
+        }
+
+        var zoneId = player.Zone.Id;
+        if (!_toolShedsByZoneId.ContainsKey(zoneId))
+        {
+            _logger.LogWarning(
+                "Tool Shed interaction but no tracked shed zone={ZoneId} character={CharacterId}.",
+                zoneId, GuidHelper.GetPlayerId(player.Guid));
+            return;
+        }
+
+        _logger.LogInformation(
+            "Prototype Tool Shed interaction → OpenToolshed 188/26 zone={ZoneId} character={CharacterId}.",
+            zoneId, GuidHelper.GetPlayerId(player.Guid));
+
+        SendExperimentalOpenToolshed(player);
     }
 
     private HashSet<string> GetClearedObstacleKeys(ulong characterId)
