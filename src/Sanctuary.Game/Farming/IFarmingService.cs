@@ -72,4 +72,28 @@ public interface IFarmingService
     /// Restricted to private Wilds farm. Does not require Shovel, attach mesh, clear rocks, or write DB.
     /// </summary>
     bool TrySendExperimentalDigAnimation(Player player, out string message);
+
+    /// <summary>
+    /// EXPERIMENTAL / debug-only: temporary farming shovel ADR attach + farm_dig, then restore weapon visuals.
+    /// Private Wilds farm only. Does not mutate inventory/profile DB or rock clearing.
+    /// </summary>
+    bool TryStartExperimentalShovelVisual(Player player, out string message);
+
+    /// <summary>
+    /// EXPERIMENTAL / debug-only: temporary mining shovel ADR (complete local assets) attach + farm_dig,
+    /// then restore weapon visuals. Private Wilds farm only. Separate from shovelvisual. No inventory/DB mutate.
+    /// </summary>
+    bool TryStartExperimentalMinerShovelVisual(Player player, out string message);
+
+    /// <summary>
+    /// After Factory EquipTool 188/7 → 188/23: if successful Shovel select in private Wilds farm,
+    /// attach persistent mining-shovel visual (no timeout). Does not run on ListTools / OpenToolshed alone.
+    /// </summary>
+    void NotifyFarmToolEquipResult(Player player, int toolId, bool success);
+
+    /// <summary>
+    /// Drop farm-tool shovel visual tracking on disconnect (no restore packets; connection is dying).
+    /// Clears session SelectedFarmToolId.
+    /// </summary>
+    void OnPlayerDisconnect(Player player);
 }

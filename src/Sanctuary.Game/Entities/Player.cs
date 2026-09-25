@@ -254,8 +254,15 @@ public sealed class Player : ClientPcData, IEntity
         }
     }
 
+    /// <summary>
+    /// Optional short-lived debug callback polled by the zone second timer
+    /// (e.g. farming shovelvisual / minervisual cleanup). Cleared by the owning experiment.
+    /// </summary>
+    public Action? DebugFarmingSecondTickAction { get; set; }
+
     public void UpdateEverySecond()
     {
+        DebugFarmingSecondTickAction?.Invoke();
     }
 
     // The client animates the cooldown sweep itself from TotalRefreshTime -

@@ -13,10 +13,10 @@ public class FarmTestChatCommand : IChatCommand
     public string KeyWord => "farmtest";
 
     public string Usage =>
-        "enter|leave|seed|status|grow|reset|tp|weed|weedremove|rock|rockremove|tree|treeremove|obstacles|obstaclesreset|toolshed|diganim";
+        "enter|leave|seed|status|grow|reset|tp|weed|weedremove|rock|rockremove|tree|treeremove|obstacles|obstaclesreset|toolshed|diganim|shovelvisual|minervisual";
 
     public string Description =>
-        "Wilds Farm private test (enter/leave) + Farnum harness helpers + persistent weed/rock/tree obstacles. Physical Tool Shed on enter. EXPERIMENTAL toolshed / diganim.";
+        "Wilds Farm private test (enter/leave) + Farnum harness helpers + persistent weed/rock/tree obstacles. Physical Tool Shed on enter. EXPERIMENTAL toolshed / diganim / shovelvisual / minervisual.";
 
     public ChatCommandRole RequiredRole => ChatCommandRole.Admin;
 
@@ -160,6 +160,26 @@ public class FarmTestChatCommand : IChatCommand
                 {
                     _chatCommandManager.LogAction(this, invoker, "Farmtest experimental diganim farm_dig 3900003", null, null);
                     ChatHelper.SendSystemMessage(invoker, digAnimMsg);
+                }
+                break;
+            case "shovelvisual":
+                // EXPERIMENTAL / debug-only: temporary farmingshovel ADR + farm_dig, then restore. Wilds farm only. No rock clear/DB.
+                if (!_farmingService.TryStartExperimentalShovelVisual(invoker, out var shovelVisualMsg))
+                    ChatHelper.SendSystemMessage(invoker, shovelVisualMsg);
+                else
+                {
+                    _chatCommandManager.LogAction(this, invoker, "Farmtest experimental shovelvisual attach+dig", null, null);
+                    ChatHelper.SendSystemMessage(invoker, shovelVisualMsg);
+                }
+                break;
+            case "minervisual":
+                // EXPERIMENTAL / debug-only: temporary mining shovel ADR (complete assets) + farm_dig, then restore. Wilds farm only.
+                if (!_farmingService.TryStartExperimentalMinerShovelVisual(invoker, out var minerVisualMsg))
+                    ChatHelper.SendSystemMessage(invoker, minerVisualMsg);
+                else
+                {
+                    _chatCommandManager.LogAction(this, invoker, "Farmtest experimental minervisual mining shovel attach+dig", null, null);
+                    ChatHelper.SendSystemMessage(invoker, minerVisualMsg);
                 }
                 break;
             default:

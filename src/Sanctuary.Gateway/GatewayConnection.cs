@@ -17,6 +17,7 @@ using Sanctuary.Database;
 using Sanctuary.Database.Entities;
 using Sanctuary.Game;
 using Sanctuary.Game.Entities;
+using Sanctuary.Game.Farming;
 using Sanctuary.Gateway.Handlers;
 using Sanctuary.Packet;
 using Sanctuary.Packet.Common;
@@ -84,6 +85,16 @@ public class GatewayConnection : UdpConnection
         _loginClient.SendCharacterLogout(GuidHelper.GetPlayerId(Player.Guid));
 
         SavePlayerToDatabase();
+
+        try
+        {
+            var farmingService = _serviceProvider.GetService(typeof(IFarmingService)) as IFarmingService;
+            farmingService?.OnPlayerDisconnect(Player);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "{connection} farming disconnect cleanup failed.", this);
+        }
 
         Player.Dispose();
     }

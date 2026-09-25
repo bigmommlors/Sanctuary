@@ -36,12 +36,29 @@ public sealed class FarmingService : IFarmingService
     /// Temporary physical Tool Shed (Models.txt 3415) per private Wilds zone. Not FarmObstacles.
     /// </summary>
     private readonly ConcurrentDictionary<int, Npc> _toolShedsByZoneId = new();
-
     /// <summary>
     /// EXPERIMENTAL: in-flight dig→delayed rock clears keyed by private Wilds zone id.
     /// Prevents duplicate clicks; cancelled on leave/remove/reset.
     /// </summary>
     private readonly ConcurrentDictionary<int, PendingRockClear> _pendingRockClearsByZoneId = new();
+
+    /// <summary>
+    /// EXPERIMENTAL: in-flight shovelvisual attach→dig→restore keyed by character id.
+    /// Visual packets only; cancelled on leave/enter/disconnect tick.
+    /// </summary>
+    private readonly ConcurrentDictionary<ulong, PendingShovelVisual> _pendingShovelVisualsByCharacterId = new();
+
+    /// <summary>
+    /// EXPERIMENTAL: in-flight minervisual (mining shovel ADR) attach→dig→restore keyed by character id.
+    /// Mutually exclusive with shovelvisual; cancelled on leave/enter.
+    /// </summary>
+    private readonly ConcurrentDictionary<ulong, PendingMinerShovelVisual> _pendingMinerShovelVisualsByCharacterId = new();
+
+    /// <summary>
+    /// EXPERIMENTAL: persistent Tool Shed Shovel hand visual (mining ADR) while SelectedFarmToolId=4.
+    /// No timeout; cleared on farm leave / disconnect / debug visual conflict.
+    /// </summary>
+    private readonly ConcurrentDictionary<ulong, ActiveToolShedShovelVisual> _activeToolShedShovelVisualsByCharacterId = new();
 
     public Npc? PlotNpc => _farnumPlot?.Foundation;
 
@@ -68,6 +85,37 @@ public sealed class FarmingService : IFarmingService
         ulong PlayerGuid,
         ulong RockGuid,
         DateTimeOffset DueAtUtc);
+
+    /// <summary>
+    /// EXPERIMENTAL pending shovelvisual. Cleanup re-syncs Slot 7 from profile if still in farm.
+    /// </summary>
+    private readonly record struct PendingShovelVisual(
+        Guid Token,
+        ulong CharacterId,
+        ulong PlayerGuid,
+        int ZoneId,
+        FarmingShovelVisualExperiment.EquipmentSnapshot Snapshot,
+        DateTimeOffset DueAtUtc);
+
+    /// <summary>
+    /// EXPERIMENTAL pending minervisual. Same restore policy as shovelvisual; different ADR constants.
+    /// </summary>
+    private readonly record struct PendingMinerShovelVisual(
+        Guid Token,
+        ulong CharacterId,
+        ulong PlayerGuid,
+        int ZoneId,
+        FarmingShovelVisualExperiment.EquipmentSnapshot Snapshot,
+        DateTimeOffset DueAtUtc);
+
+    /// <summary>
+    /// EXPERIMENTAL persistent Tool Shed shovel visual (no due time). Snapshot used for change-detection logging only.
+    /// </summary>
+    private readonly record struct ActiveToolShedShovelVisual(
+        ulong CharacterId,
+        ulong PlayerGuid,
+        int ZoneId,
+        FarmingShovelVisualExperiment.EquipmentSnapshot Snapshot);
 
     public FarmingService(
         ILogger<FarmingService> logger,
@@ -193,6 +241,9 @@ public sealed class FarmingService : IFarmingService
 
         // Fresh private farm session: no prior Factory tool selection.
         player.SelectedFarmToolId = null;
+        CancelExperimentalShovelVisual(characterId, reason: "farm enter");
+        CancelExperimentalMinerShovelVisual(characterId, reason: "farm enter");
+        ClearToolShedShovelVisual(characterId, reason: "farm enter", sendRestore: true);
 
         var spawn = destination.SpawnPosition;
         var rotation = destination.SpawnRotation;
@@ -252,6 +303,9 @@ public sealed class FarmingService : IFarmingService
 
         // Session-only Factory tool selection must not leak across farm exits / zone returns.
         player.SelectedFarmToolId = null;
+        CancelExperimentalShovelVisual(characterId, reason: "farm leave");
+        CancelExperimentalMinerShovelVisual(characterId, reason: "farm leave");
+        ClearToolShedShovelVisual(characterId, reason: "farm leave", sendRestore: true);
 
         player.TeleportToZone(destination, session.ReturnPosition, session.ReturnRotation);
 
@@ -714,6 +768,564 @@ public sealed class FarmingService : IFarmingService
 
         message = FarmingDigAnimExperiment.SuccessMessage;
         return true;
+    }
+
+    /// <summary>
+    /// EXPERIMENTAL / debug-only: temporary attach of tool_ar_ag_weapon_farmingshovel.adr (visual packets only),
+    /// play farm_dig 3900003, then restore Slot 7 visuals from current profile after delay.
+    /// Does not mutate inventory/profile DB, diganim command, or rock clearing.
+    /// </summary>
+    public bool TryStartExperimentalShovelVisual(Player player, out string message)
+    {
+        if (!IsInWildsTestInstance(player) || player.Zone is null)
+        {
+            message = FarmingShovelVisualExperiment.NotInWildsFarmMessage;
+            return false;
+        }
+
+        var characterId = GuidHelper.GetPlayerId(player.Guid);
+        if (_pendingShovelVisualsByCharacterId.ContainsKey(characterId) ||
+            _pendingMinerShovelVisualsByCharacterId.ContainsKey(characterId))
+        {
+            message = FarmingShovelVisualExperiment.AlreadyRunningMessage;
+            return false;
+        }
+
+        // Yield Slot 7 to timed debug experiment; re-apply Tool Shed visual after debug restore if still selected.
+        ClearToolShedShovelVisual(characterId, reason: "shovelvisual started", sendRestore: true);
+
+        var profileId = player.ActiveProfileId;
+        var slot = FarmingShovelVisualExperiment.ExperimentalSlot;
+        var slotHasItem = player.ActiveProfile.Items.TryGetValue(slot, out var profileItem);
+        var attachment = player.GetAttachment(slot);
+        var wieldType = FarmingShovelVisualExperiment.ExperimentalWieldType;
+        int? profileItemId = null;
+
+        if (slotHasItem && profileItem is not null)
+        {
+            profileItemId = profileItem.Id;
+            var clientItem = player.Items.FirstOrDefault(x => x.Id == profileItem.Id);
+            if (clientItem is not null &&
+                _resourceManager.ClientItemDefinitions.TryGetValue(clientItem.Definition, out var def) &&
+                _resourceManager.ItemClasses.TryGetValue(def.Class, out var itemClass))
+            {
+                wieldType = itemClass.WieldType;
+            }
+        }
+
+        if (!FarmingShovelVisualExperiment.TryCreateSnapshot(
+                profileId,
+                slotHasItem,
+                attachment,
+                wieldType,
+                profileItemId,
+                out var snapshot,
+                out var rejectMessage))
+        {
+            message = rejectMessage ?? FarmingShovelVisualExperiment.UnsafeRestoreMessage;
+            _logger.LogWarning(
+                "EXPERIMENTAL SHOVEL VISUAL rejected (unsafe restore) character={CharacterId} PlayerGuid={PlayerGuid}",
+                characterId, player.Guid);
+            return false;
+        }
+
+        var token = Guid.NewGuid();
+        var dueAt = FarmingShovelVisualExperiment.ComputeDueAtUtc(DateTimeOffset.UtcNow);
+        var pending = new PendingShovelVisual(
+            token,
+            characterId,
+            player.Guid,
+            player.Zone.Id,
+            snapshot,
+            dueAt);
+
+        if (!_pendingShovelVisualsByCharacterId.TryAdd(characterId, pending))
+        {
+            message = FarmingShovelVisualExperiment.AlreadyRunningMessage;
+            return false;
+        }
+
+        var experimentalAttachment = FarmingShovelVisualExperiment.CreateExperimentalAttachment();
+
+        // Self ClientUpdate (inventory equip path) + visible PlayerUpdate. Id/Guid=0 = visual-only sentinel.
+        player.SendTunneled(FarmingShovelVisualExperiment.CreateSelfEquipPacket(
+            experimentalAttachment,
+            profileId,
+            FarmingShovelVisualExperiment.ExperimentalItemInstanceId,
+            equip: true));
+
+        player.SendTunneledToVisible(
+            FarmingShovelVisualExperiment.CreateVisibleEquipPacket(
+                player.Guid,
+                FarmingShovelVisualExperiment.ExperimentalItemInstanceId,
+                experimentalAttachment,
+                profileId,
+                FarmingShovelVisualExperiment.ExperimentalWieldType),
+            sendToSelf: true);
+
+        _logger.LogInformation(
+            "EXPERIMENTAL SHOVEL VISUAL: attached ModelName={ModelName} TextureAlias={TextureAlias} TintAlias={TintAlias} Slot={Slot} WieldType={WieldType} ItemId={ItemId} PlayerGuid={PlayerGuid} (EXPERIMENTAL Slot/WieldType/Id)",
+            FarmingShovelVisualExperiment.ModelName,
+            FarmingShovelVisualExperiment.TextureAlias,
+            FarmingShovelVisualExperiment.TintAlias,
+            FarmingShovelVisualExperiment.ExperimentalSlot,
+            FarmingShovelVisualExperiment.ExperimentalWieldType,
+            FarmingShovelVisualExperiment.ExperimentalItemInstanceId,
+            player.Guid);
+
+        var animPacket = FarmingDigAnimExperiment.CreatePlayNowPacket(player.Guid);
+        player.SendTunneledToVisible(animPacket, sendToSelf: true);
+
+        _logger.LogInformation(
+            "EXPERIMENTAL SHOVEL VISUAL: sent farm_dig AnimationId={AnimationId} PlayerGuid={PlayerGuid} durationMs={DurationMs} dueAt={DueAt:u}",
+            animPacket.AnimationId,
+            player.Guid,
+            FarmingShovelVisualExperiment.ExperimentalVisualDurationMs,
+            dueAt);
+
+        player.DebugFarmingSecondTickAction = () => TryCompleteExperimentalShovelVisual(characterId, token);
+
+        message = FarmingShovelVisualExperiment.SuccessMessage;
+        return true;
+    }
+
+    private void TryCompleteExperimentalShovelVisual(ulong characterId, Guid token)
+    {
+        if (!_pendingShovelVisualsByCharacterId.TryGetValue(characterId, out var pending))
+            return;
+
+        if (pending.Token != token)
+            return;
+
+        if (!FarmingShovelVisualExperiment.IsDue(DateTimeOffset.UtcNow, pending.DueAtUtc))
+            return;
+
+        if (!_pendingShovelVisualsByCharacterId.TryRemove(characterId, out pending) || pending.Token != token)
+            return;
+
+        RestoreShovelVisualFromProfile(pending, reason: "duration elapsed");
+    }
+
+    private void CancelExperimentalShovelVisual(ulong characterId, string reason)
+    {
+        if (!_pendingShovelVisualsByCharacterId.TryRemove(characterId, out var pending))
+            return;
+
+        RestoreShovelVisualFromProfile(pending, reason);
+    }
+
+    /// <summary>
+    /// EXPERIMENTAL / debug-only: temporary attach of tool_ar_ag_weapon_shovel.adr (mining shovel, complete local assets),
+    /// play farm_dig 3900003, then restore Slot 7 visuals from current profile after delay.
+    /// Does not mutate inventory/profile DB, shovelvisual, diganim, Tool Shed, or rock clearing.
+    /// </summary>
+    public bool TryStartExperimentalMinerShovelVisual(Player player, out string message)
+    {
+        if (!IsInWildsTestInstance(player) || player.Zone is null)
+        {
+            message = FarmingMinerShovelVisualExperiment.NotInWildsFarmMessage;
+            return false;
+        }
+
+        var characterId = GuidHelper.GetPlayerId(player.Guid);
+        if (_pendingMinerShovelVisualsByCharacterId.ContainsKey(characterId) ||
+            _pendingShovelVisualsByCharacterId.ContainsKey(characterId))
+        {
+            message = FarmingMinerShovelVisualExperiment.AlreadyRunningMessage;
+            return false;
+        }
+
+        // Yield Slot 7 to timed debug experiment; re-apply Tool Shed visual after debug restore if still selected.
+        ClearToolShedShovelVisual(characterId, reason: "minervisual started", sendRestore: true);
+
+        var profileId = player.ActiveProfileId;
+        var slot = FarmingMinerShovelVisualExperiment.ExperimentalSlot;
+        var slotHasItem = player.ActiveProfile.Items.TryGetValue(slot, out var profileItem);
+        var attachment = player.GetAttachment(slot);
+        var wieldType = FarmingMinerShovelVisualExperiment.ExperimentalWieldType;
+        int? profileItemId = null;
+
+        if (slotHasItem && profileItem is not null)
+        {
+            profileItemId = profileItem.Id;
+            var clientItem = player.Items.FirstOrDefault(x => x.Id == profileItem.Id);
+            if (clientItem is not null &&
+                _resourceManager.ClientItemDefinitions.TryGetValue(clientItem.Definition, out var def) &&
+                _resourceManager.ItemClasses.TryGetValue(def.Class, out var itemClass))
+            {
+                wieldType = itemClass.WieldType;
+            }
+        }
+
+        if (!FarmingMinerShovelVisualExperiment.TryCreateSnapshot(
+                profileId,
+                slotHasItem,
+                attachment,
+                wieldType,
+                profileItemId,
+                out var snapshot,
+                out var rejectMessage))
+        {
+            message = rejectMessage ?? FarmingMinerShovelVisualExperiment.UnsafeRestoreMessage;
+            _logger.LogWarning(
+                "EXPERIMENTAL MINER SHOVEL VISUAL rejected (unsafe restore) character={CharacterId} PlayerGuid={PlayerGuid}",
+                characterId, player.Guid);
+            return false;
+        }
+
+        var token = Guid.NewGuid();
+        var dueAt = FarmingMinerShovelVisualExperiment.ComputeDueAtUtc(DateTimeOffset.UtcNow);
+        var pending = new PendingMinerShovelVisual(
+            token,
+            characterId,
+            player.Guid,
+            player.Zone.Id,
+            snapshot,
+            dueAt);
+
+        if (!_pendingMinerShovelVisualsByCharacterId.TryAdd(characterId, pending))
+        {
+            message = FarmingMinerShovelVisualExperiment.AlreadyRunningMessage;
+            return false;
+        }
+
+        var experimentalAttachment = FarmingMinerShovelVisualExperiment.CreateExperimentalAttachment();
+
+        // Self ClientUpdate (inventory equip path) + visible PlayerUpdate. Id/Guid=0 = visual-only sentinel.
+        player.SendTunneled(FarmingShovelVisualExperiment.CreateSelfEquipPacket(
+            experimentalAttachment,
+            profileId,
+            FarmingMinerShovelVisualExperiment.ExperimentalItemInstanceId,
+            equip: true));
+
+        player.SendTunneledToVisible(
+            FarmingShovelVisualExperiment.CreateVisibleEquipPacket(
+                player.Guid,
+                FarmingMinerShovelVisualExperiment.ExperimentalItemInstanceId,
+                experimentalAttachment,
+                profileId,
+                FarmingMinerShovelVisualExperiment.ExperimentalWieldType),
+            sendToSelf: true);
+
+        _logger.LogInformation(
+            "EXPERIMENTAL MINER SHOVEL VISUAL: attached ModelName={ModelName} TextureAlias={TextureAlias} TintAlias={TintAlias} TintId={TintId} CompositeEffectId={CompositeEffectId} Slot={Slot} WieldType={WieldType} ItemInstanceId={ItemInstanceId} ProfileId={ProfileId} PlayerGuid={PlayerGuid} (visual-only; not catalog Id 1910)",
+            FarmingMinerShovelVisualExperiment.ModelName,
+            FarmingMinerShovelVisualExperiment.TextureAlias,
+            FarmingMinerShovelVisualExperiment.TintAlias,
+            experimentalAttachment.TintId,
+            FarmingMinerShovelVisualExperiment.CompositeEffectId,
+            FarmingMinerShovelVisualExperiment.ExperimentalSlot,
+            FarmingMinerShovelVisualExperiment.ExperimentalWieldType,
+            FarmingMinerShovelVisualExperiment.ExperimentalItemInstanceId,
+            profileId,
+            player.Guid);
+
+        var animPacket = FarmingDigAnimExperiment.CreatePlayNowPacket(player.Guid);
+        player.SendTunneledToVisible(animPacket, sendToSelf: true);
+
+        _logger.LogInformation(
+            "EXPERIMENTAL MINER SHOVEL VISUAL: sent farm_dig AnimationId={AnimationId} Flags={Flags} Unknown={Unknown} PlayerGuid={PlayerGuid} durationMs={DurationMs} dueAt={DueAt:u}",
+            animPacket.AnimationId,
+            animPacket.Flags,
+            animPacket.Unknown,
+            player.Guid,
+            FarmingMinerShovelVisualExperiment.ExperimentalVisualDurationMs,
+            dueAt);
+
+        player.DebugFarmingSecondTickAction = () => TryCompleteExperimentalMinerShovelVisual(characterId, token);
+
+        message = FarmingMinerShovelVisualExperiment.SuccessMessage;
+        return true;
+    }
+
+    private void TryCompleteExperimentalMinerShovelVisual(ulong characterId, Guid token)
+    {
+        if (!_pendingMinerShovelVisualsByCharacterId.TryGetValue(characterId, out var pending))
+            return;
+
+        if (pending.Token != token)
+            return;
+
+        if (!FarmingMinerShovelVisualExperiment.IsDue(DateTimeOffset.UtcNow, pending.DueAtUtc))
+            return;
+
+        if (!_pendingMinerShovelVisualsByCharacterId.TryRemove(characterId, out pending) || pending.Token != token)
+            return;
+
+        RestoreMinerShovelVisualFromProfile(pending, reason: "duration elapsed");
+    }
+
+    private void CancelExperimentalMinerShovelVisual(ulong characterId, string reason)
+    {
+        if (!_pendingMinerShovelVisualsByCharacterId.TryRemove(characterId, out var pending))
+            return;
+
+        RestoreMinerShovelVisualFromProfile(pending, reason);
+    }
+
+    /// <summary>
+    /// Restore Slot 7 visuals from current profile (not a stale mesh snapshot).
+    /// Skips force-applying snapshot if profile weapon identity changed during the experiment.
+    /// </summary>
+    private void RestoreShovelVisualFromProfile(PendingShovelVisual pending, string reason) =>
+        RestoreExperimentalSlot7Visual(
+            pending.CharacterId,
+            pending.PlayerGuid,
+            pending.ZoneId,
+            pending.Snapshot,
+            reason,
+            logPrefix: "EXPERIMENTAL SHOVEL VISUAL",
+            reapplyToolShedIfSelected: reason == "duration elapsed");
+
+    private void RestoreMinerShovelVisualFromProfile(PendingMinerShovelVisual pending, string reason) =>
+        RestoreExperimentalSlot7Visual(
+            pending.CharacterId,
+            pending.PlayerGuid,
+            pending.ZoneId,
+            pending.Snapshot,
+            reason,
+            logPrefix: "EXPERIMENTAL MINER SHOVEL VISUAL",
+            reapplyToolShedIfSelected: reason == "duration elapsed");
+
+    private void RestoreExperimentalSlot7Visual(
+        ulong characterId,
+        ulong playerGuid,
+        int zoneId,
+        FarmingShovelVisualExperiment.EquipmentSnapshot snapshot,
+        string reason,
+        string logPrefix,
+        bool reapplyToolShedIfSelected = false)
+    {
+        _zoneManager.TryGetPlayer(playerGuid, out var player);
+
+        if (player is not null)
+            player.DebugFarmingSecondTickAction = null;
+
+        if (player is null || !IsInWildsTestInstance(player) || player.Zone?.Id != zoneId)
+        {
+            _logger.LogInformation(
+                "{LogPrefix}: cleanup skipped restore (player left farm/zone) character={CharacterId} reason={Reason}",
+                logPrefix, characterId, reason);
+            return;
+        }
+
+        var slot = FarmingShovelVisualExperiment.ExperimentalSlot;
+        var profileId = player.ActiveProfileId;
+        var currentHasItem = player.ActiveProfile.Items.TryGetValue(slot, out var profileItem);
+        var currentItemId = currentHasItem && profileItem is not null ? profileItem.Id : (int?)null;
+
+        // Safety: never overwrite with outdated snapshotted mesh if profile item changed mid-experiment.
+        if (currentItemId != snapshot.ProfileItemId)
+        {
+            _logger.LogInformation(
+                "{LogPrefix}: profile Slot {Slot} item changed during experiment (was {Was}, now {Now}); syncing current profile only. character={CharacterId} reason={Reason}",
+                logPrefix, slot, snapshot.ProfileItemId, currentItemId, characterId, reason);
+        }
+
+        var currentAttachment = player.GetAttachment(slot);
+        if (currentHasItem && profileItem is not null && currentAttachment is not null)
+        {
+            var clientItem = player.Items.FirstOrDefault(x => x.Id == profileItem.Id);
+            var restoreWield = FarmingShovelVisualExperiment.ExperimentalWieldType;
+            if (clientItem is not null &&
+                _resourceManager.ClientItemDefinitions.TryGetValue(clientItem.Definition, out var def) &&
+                _resourceManager.ItemClasses.TryGetValue(def.Class, out var itemClass))
+            {
+                restoreWield = itemClass.WieldType;
+            }
+
+            var itemId = clientItem?.Id ?? profileItem.Id;
+
+            player.SendTunneled(FarmingShovelVisualExperiment.CreateSelfEquipPacket(
+                currentAttachment, profileId, itemId, equip: true));
+            player.SendTunneledToVisible(
+                FarmingShovelVisualExperiment.CreateVisibleEquipPacket(
+                    player.Guid, itemId, currentAttachment, profileId, restoreWield),
+                sendToSelf: true);
+
+            _logger.LogInformation(
+                "{LogPrefix}: restored Slot {Slot} weapon visuals from profile itemId={ItemId} character={CharacterId} reason={Reason}",
+                logPrefix, slot, itemId, characterId, reason);
+        }
+        else
+        {
+            // Empty slot: unequip self + clear visible (Id=0 sentinel for visual clear).
+            player.SendTunneled(FarmingShovelVisualExperiment.CreateSelfUnequipPacket(slot, profileId));
+            player.SendTunneledToVisible(
+                FarmingShovelVisualExperiment.CreateVisibleClearSlotPacket(
+                    player.Guid,
+                    FarmingShovelVisualExperiment.ExperimentalItemInstanceId,
+                    slot,
+                    profileId,
+                    FarmingShovelVisualExperiment.ExperimentalWieldType),
+                sendToSelf: true);
+
+            _logger.LogInformation(
+                "{LogPrefix}: cleared Slot {Slot} visuals (no profile weapon) character={CharacterId} reason={Reason}",
+                logPrefix, slot, characterId, reason);
+        }
+
+        // Only after timed debug completes — not when canceling debug to attach Tool Shed visual.
+        if (reapplyToolShedIfSelected &&
+            FarmingToolShedShovelVisual.ShouldRemainVisible(player.SelectedFarmToolId))
+        {
+            TryAttachToolShedShovelVisual(player, reason: $"reapply after {logPrefix} ({reason})");
+        }
+    }
+
+    /// <summary>
+    /// EquipTool 188/7 → 188/23 result: attach persistent mining shovel visual only on successful Shovel
+    /// select inside private Wilds farm. ListTools / OpenToolshed alone do not call this.
+    /// Failed / unsupported ToolIds do not detach (no proven unequip/switch event).
+    /// </summary>
+    public void NotifyFarmToolEquipResult(Player player, int toolId, bool success)
+    {
+        if (player is null)
+            return;
+
+        if (!FarmingToolShedShovelVisual.ShouldAttachOnEquipResult(
+                IsInWildsTestInstance(player), toolId, success))
+        {
+            if (!success)
+            {
+                _logger.LogDebug(
+                    "TOOL SHED SHOVEL VISUAL: EquipTool failure ToolId={ToolId} — no detach (no proven unequip/switch). SelectedFarmToolId={SelectedFarmToolId} PlayerGuid={PlayerGuid}",
+                    toolId, player.SelectedFarmToolId, player.Guid);
+            }
+
+            return;
+        }
+
+        TryAttachToolShedShovelVisual(player, reason: "EquipTool 188/7 Success Shovel ToolId=4");
+    }
+
+    public void OnPlayerDisconnect(Player player)
+    {
+        if (player is null)
+            return;
+
+        var characterId = GuidHelper.GetPlayerId(player.Guid);
+        player.SelectedFarmToolId = null;
+        player.DebugFarmingSecondTickAction = null;
+
+        // Connection dying: drop tracking only — do not send restore packets.
+        _pendingShovelVisualsByCharacterId.TryRemove(characterId, out _);
+        _pendingMinerShovelVisualsByCharacterId.TryRemove(characterId, out _);
+        _activeToolShedShovelVisualsByCharacterId.TryRemove(characterId, out _);
+
+        _logger.LogInformation(
+            "TOOL SHED SHOVEL VISUAL: disconnect cleanup character={CharacterId} PlayerGuid={PlayerGuid}",
+            characterId, player.Guid);
+    }
+
+    private void TryAttachToolShedShovelVisual(Player player, string reason)
+    {
+        if (!IsInWildsTestInstance(player) || player.Zone is null)
+            return;
+
+        if (!FarmingToolShedShovelVisual.ShouldRemainVisible(player.SelectedFarmToolId))
+            return;
+
+        var characterId = GuidHelper.GetPlayerId(player.Guid);
+
+        // Timed debug experiments own Slot 7 briefly — cancel them before persistent attach.
+        CancelExperimentalShovelVisual(characterId, reason: "tool shed shovel visual attach");
+        CancelExperimentalMinerShovelVisual(characterId, reason: "tool shed shovel visual attach");
+
+        var profileId = player.ActiveProfileId;
+        var slot = FarmingToolShedShovelVisual.Slot;
+        var slotHasItem = player.ActiveProfile.Items.TryGetValue(slot, out var profileItem);
+        var attachment = player.GetAttachment(slot);
+        var wieldType = FarmingToolShedShovelVisual.WieldType;
+        int? profileItemId = null;
+
+        if (slotHasItem && profileItem is not null)
+        {
+            profileItemId = profileItem.Id;
+            var clientItem = player.Items.FirstOrDefault(x => x.Id == profileItem.Id);
+            if (clientItem is not null &&
+                _resourceManager.ClientItemDefinitions.TryGetValue(clientItem.Definition, out var def) &&
+                _resourceManager.ItemClasses.TryGetValue(def.Class, out var itemClass))
+            {
+                wieldType = itemClass.WieldType;
+            }
+        }
+
+        if (!FarmingMinerShovelVisualExperiment.TryCreateSnapshot(
+                profileId,
+                slotHasItem,
+                attachment,
+                wieldType,
+                profileItemId,
+                out var snapshot,
+                out var rejectMessage))
+        {
+            _logger.LogWarning(
+                "TOOL SHED SHOVEL VISUAL: attach skipped (unsafe restore) character={CharacterId} PlayerGuid={PlayerGuid} reason={Reason} detail={Detail}",
+                characterId, player.Guid, reason, rejectMessage);
+            return;
+        }
+
+        var active = new ActiveToolShedShovelVisual(
+            characterId,
+            player.Guid,
+            player.Zone.Id,
+            snapshot);
+
+        _activeToolShedShovelVisualsByCharacterId[characterId] = active;
+
+        var shovelAttachment = FarmingToolShedShovelVisual.CreateAttachment();
+
+        player.SendTunneled(FarmingShovelVisualExperiment.CreateSelfEquipPacket(
+            shovelAttachment,
+            profileId,
+            FarmingToolShedShovelVisual.ItemInstanceId,
+            equip: true));
+
+        player.SendTunneledToVisible(
+            FarmingShovelVisualExperiment.CreateVisibleEquipPacket(
+                player.Guid,
+                FarmingToolShedShovelVisual.ItemInstanceId,
+                shovelAttachment,
+                profileId,
+                FarmingToolShedShovelVisual.WieldType),
+            sendToSelf: true);
+
+        _logger.LogInformation(
+            "TOOL SHED SHOVEL VISUAL: attached ModelName={ModelName} TextureAlias={TextureAlias} TintAlias={TintAlias} TintId={TintId} CompositeEffectId={CompositeEffectId} Slot={Slot} WieldType={WieldType} ItemInstanceId={ItemInstanceId} ProfileId={ProfileId} PlayerGuid={PlayerGuid} reason={Reason} (persistent while Shovel selected; visual-only)",
+            FarmingToolShedShovelVisual.ModelName,
+            FarmingToolShedShovelVisual.TextureAlias,
+            FarmingToolShedShovelVisual.TintAlias,
+            shovelAttachment.TintId,
+            FarmingToolShedShovelVisual.CompositeEffectId,
+            FarmingToolShedShovelVisual.Slot,
+            FarmingToolShedShovelVisual.WieldType,
+            FarmingToolShedShovelVisual.ItemInstanceId,
+            profileId,
+            player.Guid,
+            reason);
+    }
+
+    private void ClearToolShedShovelVisual(ulong characterId, string reason, bool sendRestore)
+    {
+        if (!_activeToolShedShovelVisualsByCharacterId.TryRemove(characterId, out var active))
+            return;
+
+        if (!sendRestore)
+        {
+            _logger.LogInformation(
+                "TOOL SHED SHOVEL VISUAL: dropped tracking character={CharacterId} reason={Reason}",
+                characterId, reason);
+            return;
+        }
+
+        RestoreExperimentalSlot7Visual(
+            active.CharacterId,
+            active.PlayerGuid,
+            active.ZoneId,
+            active.Snapshot,
+            reason,
+            logPrefix: "TOOL SHED SHOVEL VISUAL");
     }
 
     /// <summary>
