@@ -15,7 +15,7 @@ namespace Sanctuary.Database.Sqlite.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "9.0.9");
+            modelBuilder.HasAnnotation("ProductVersion", "9.0.17");
 
             modelBuilder.Entity("DbItemDbProfile", b =>
                 {
@@ -89,7 +89,7 @@ namespace Sanctuary.Database.Sqlite.Migrations
 
                     b.Property<string>("FullName")
                         .ValueGeneratedOnAddOrUpdate()
-                        .HasMaxLength(32)
+                        .HasMaxLength(33)
                         .HasColumnType("TEXT")
                         .HasComputedColumnSql("CONCAT_WS(' ', FirstName, NULLIF(LastName, ''))", true);
 
@@ -182,6 +182,74 @@ namespace Sanctuary.Database.Sqlite.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("Characters");
+                });
+
+            modelBuilder.Entity("Sanctuary.Database.Entities.DbCropPlot", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<ulong>("CharacterId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("Created")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValueSql("DATE()");
+
+                    b.Property<DateTimeOffset?>("PlantedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PlotKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("SeedDefinitionId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CharacterId", "PlotKey")
+                        .IsUnique();
+
+                    b.ToTable("CropPlots");
+                });
+
+            modelBuilder.Entity("Sanctuary.Database.Entities.DbFarmObstacle", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<ulong>("CharacterId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("ClearedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("Created")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValueSql("DATE()");
+
+                    b.Property<string>("FarmKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ObstacleKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CharacterId", "FarmKey", "ObstacleKey")
+                        .IsUnique();
+
+                    b.ToTable("FarmObstacles");
                 });
 
             modelBuilder.Entity("Sanctuary.Database.Entities.DbFriend", b =>
@@ -474,6 +542,28 @@ namespace Sanctuary.Database.Sqlite.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Sanctuary.Database.Entities.DbCropPlot", b =>
+                {
+                    b.HasOne("Sanctuary.Database.Entities.DbCharacter", "Character")
+                        .WithMany("CropPlots")
+                        .HasForeignKey("CharacterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Character");
+                });
+
+            modelBuilder.Entity("Sanctuary.Database.Entities.DbFarmObstacle", b =>
+                {
+                    b.HasOne("Sanctuary.Database.Entities.DbCharacter", "Character")
+                        .WithMany("FarmObstacles")
+                        .HasForeignKey("CharacterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Character");
+                });
+
             modelBuilder.Entity("Sanctuary.Database.Entities.DbFriend", b =>
                 {
                     b.HasOne("Sanctuary.Database.Entities.DbCharacter", "Character")
@@ -569,6 +659,10 @@ namespace Sanctuary.Database.Sqlite.Migrations
 
             modelBuilder.Entity("Sanctuary.Database.Entities.DbCharacter", b =>
                 {
+                    b.Navigation("CropPlots");
+
+                    b.Navigation("FarmObstacles");
+
                     b.Navigation("Friends");
 
                     b.Navigation("Ignores");

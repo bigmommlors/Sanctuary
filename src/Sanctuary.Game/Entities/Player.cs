@@ -73,6 +73,12 @@ public sealed class Player : ClientPcData, IEntity
 
     public ulong LastSillyStringTarget { get; set; }
 
+    /// <summary>
+    /// EXPERIMENTAL: last successfully equipped Factory farming ToolId (e.g. Shovel=4).
+    /// Session-only; cleared on Wilds farm leave. Not retail held-tool state.
+    /// </summary>
+    public int? SelectedFarmToolId { get; set; }
+
     private readonly ConcurrentDictionary<int, DateTimeOffset> _itemCooldowns = new();
 
     public bool IsItemOnCooldown(int itemDefinitionId) =>

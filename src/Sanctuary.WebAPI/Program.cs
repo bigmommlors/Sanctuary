@@ -19,7 +19,17 @@ using Sanctuary.WebAPI.Options;
 CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
 CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.InvariantCulture;
 
-var builder = WebApplication.CreateBuilder(args);
+// Content root must be the DLL directory. Starting via
+// `dotnet .\Sanctuary.WebAPI\bin\...\Sanctuary.WebAPI.dll` from another cwd
+// otherwise skips appsettings next to the assembly, leaving LaunchArguments null.
+// Without LaunchArguments the OSFR launcher omits AssetDelivery overrides and the
+// client falls back to ClientConfig IndirectServerAddress=file://./manifest,
+// which fails G27 on missing .\manifest\manifest.crc.
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory
+});
 
 builder.WebHost.UseUrls();
 

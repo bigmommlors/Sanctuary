@@ -16,6 +16,8 @@ public abstract class DatabaseContext : DbContext
     public DbSet<DbProfile> Profiles => Set<DbProfile>();
     public DbSet<DbCharacter> Characters => Set<DbCharacter>();
     public DbSet<DbGuildMember> GuildMembers => Set<DbGuildMember>();
+    public DbSet<DbCropPlot> CropPlots => Set<DbCropPlot>();
+    public DbSet<DbFarmObstacle> FarmObstacles => Set<DbFarmObstacle>();
 
     public DatabaseContext()
     {

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 
 using Microsoft.Extensions.Logging;
 
@@ -141,6 +142,71 @@ public class ZoneManager : IZoneManager
             created.Id, definitionId, created.Name, created.Sky, created.SpawnPosition);
 
         zone = created;
+        return true;
+    }
+
+    public bool TryCreateInstanceZone(int definitionId, [MaybeNullWhen(false)] out IZone zone)
+    {
+        zone = default;
+
+        if (!_resourceManager.Zones.TryGetValue(definitionId, out var zoneDefinition))
+        {
+            _logger.LogError("No zone definition Id={DefinitionId} in Resources/Zones.", definitionId);
+            return false;
+        }
+
+        if (zoneDefinition is not InstanceZoneDefinition instanceZoneDefinition)
+        {
+            _logger.LogError(
+                "Zone definition Id={DefinitionId} Name={Name} is not an Instance zone ($type Instance).",
+                definitionId, zoneDefinition.Name);
+            return false;
+        }
+
+        var created = new InstanceZone(instanceZoneDefinition, _serviceProvider)
+        {
+            Id = _uniqueId++
+        };
+
+        created.OnStart();
+
+        if (!_zones.TryAdd(created.Id, created))
+        {
+            _logger.LogError("Failed to register private instance zone Id={ZoneId} DefinitionId={DefinitionId}.", created.Id, definitionId);
+            created.Dispose();
+            return false;
+        }
+
+        _logger.LogInformation(
+            "Created private instance zone: ZoneId={ZoneId} DefinitionId={DefinitionId} Name={Name} Sky={Sky} Spawn={Spawn}",
+            created.Id, definitionId, created.Name, created.Sky, created.SpawnPosition);
+
+        zone = created;
+        return true;
+    }
+
+    public bool TryRemoveInstanceZone(int zoneId)
+    {
+        if (!_zones.TryGetValue(zoneId, out var existing) || existing is not InstanceZone instanceZone)
+            return false;
+
+        if (instanceZone.Players.Any())
+        {
+            _logger.LogWarning(
+                "Refusing to remove instance zone ZoneId={ZoneId} Name={Name} while players remain.",
+                zoneId, instanceZone.Name);
+            return false;
+        }
+
+        if (!_zones.TryRemove(zoneId, out _))
+            return false;
+
+        instanceZone.Dispose();
+
+        _logger.LogInformation(
+            "Removed instance zone: ZoneId={ZoneId} DefinitionId={DefinitionId} Name={Name}.",
+            zoneId, instanceZone.DefinitionId, instanceZone.Name);
+
         return true;
     }
 }

@@ -69,6 +69,8 @@ public class DbCharacter
     public ICollection<DbFriend> Friends { get; set; } = new HashSet<DbFriend>();
     public ICollection<DbIgnore> Ignores { get; set; } = new HashSet<DbIgnore>();
     public ICollection<DbProfile> Profiles { get; set; } = new HashSet<DbProfile>();
+    public ICollection<DbCropPlot> CropPlots { get; set; } = new HashSet<DbCropPlot>();
+    public ICollection<DbFarmObstacle> FarmObstacles { get; set; } = new HashSet<DbFarmObstacle>();
 
     public ulong UserId { get; set; }
     public DbUser User { get; set; } = null!;

@@ -10,6 +10,7 @@ using Microsoft.Extensions.Options;
 using Sanctuary.Core.Configuration;
 using Sanctuary.Database;
 using Sanctuary.Game;
+using Sanctuary.Game.Farming;
 using Sanctuary.Packet.Common.Extensions;
 using Sanctuary.Scripting;
 using Sanctuary.UdpLibrary.Enumerations;
@@ -28,6 +29,7 @@ public class GatewayService : BackgroundService
     private readonly IScriptManager _scriptManager;
     private readonly IInteractionManager _interactionManager;
     private readonly IChatCommandManager _chatCommandManager;
+    private readonly IFarmingService _farmingService;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly IDbContextFactory<DatabaseContext> _dbContextFactory;
 
@@ -42,6 +44,7 @@ public class GatewayService : BackgroundService
         IScriptManager scriptManager,
         IInteractionManager interactionManager,
         IChatCommandManager ChatCommandManager,
+        IFarmingService farmingService,
         IDbContextFactory<DatabaseContext> dbContextFactory,
         IHostApplicationLifetime hostApplicationLifetime)
     {
@@ -55,6 +58,7 @@ public class GatewayService : BackgroundService
         _scriptManager = scriptManager;
         _interactionManager = interactionManager;
         _chatCommandManager = ChatCommandManager;
+        _farmingService = farmingService;
         _dbContextFactory = dbContextFactory;
         _hostApplicationLifetime = hostApplicationLifetime;
     }
@@ -104,6 +108,15 @@ public class GatewayService : BackgroundService
         if (!_zoneManager.Load())
         {
             _logger.LogCritical("Cannot start {server}, failed to load zones.", nameof(GatewayServer));
+
+            _hostApplicationLifetime.StopApplication();
+
+            return Task.CompletedTask;
+        }
+
+        if (!_farmingService.TrySpawnPrototypePlot())
+        {
+            _logger.LogCritical("Cannot start {server}, failed to spawn farming prototype plot.", nameof(GatewayServer));
 
             _hostApplicationLifetime.StopApplication();
 

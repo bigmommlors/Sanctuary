@@ -131,9 +131,19 @@ public static class PacketInGamePurchasePlaceOrderPacketHandler
                 return true;
             }
 
-            if (clientItemDefinition.Type == 1 || clientItemDefinition.Type == 12)
+            // Type 1/12/29: generic inventory (DbItem). Type 16 deeds remain unsupported.
+            if (clientItemDefinition.Type == 1 || clientItemDefinition.Type == 12 || clientItemDefinition.Type == 29)
             {
                 var totalQuantity = orderDetail.Quantity * bundleEntry.Quantity;
+
+                if (totalQuantity <= 0)
+                {
+                    packetInGamePurchasePlaceOrderResponse.Result = 2;
+
+                    connection.SendTunneled(packetInGamePurchasePlaceOrderResponse);
+
+                    return true;
+                }
 
                 var dbItem = dbCharacter.Items.SingleOrDefault(i =>
                     i.Definition == clientItemDefinition.Id && i.Tint == orderDetailTint);

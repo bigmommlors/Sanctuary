@@ -21831,6 +21831,35 @@
         "MembersOnlyPrice":  1
     },
     {
+        "Comment":  "Bumbleberry Seed",
+        "LaunchTime":  "2011-03-29T07:00:00+00:00",
+        "ExpireTime":  "2090-01-01T08:00:00+00:00",
+        "Image":  {
+                      "Image":  "7162"
+                  },
+        "Entries":  [
+                        {
+                            "Quantity":  5,
+                            "GameItemId":  38715,
+                            "MarketingItemId":  38715
+                        }
+                    ],
+        "Id":  4906,
+        "NameId":  148454,
+        "DescriptionId":  148473,
+        "Status":  1,
+        "CurrencyType":  1,
+        "Price":  1,
+        "AltCurrencyPrice":  1,
+        "StoreId":  1,
+        "CategoryGroupId":  123,
+        "CategoryDisplayOrder":  483100,
+        "DiscountType":  603,
+        "SkuId":  1,
+        "MemberDiscount":  10,
+        "MembersOnlyPrice":  1
+    },
+    {
         "Comment":  "Bicycle",
         "LaunchTime":  "2011-04-06T07:00:00+00:00",
         "ExpireTime":  "2090-01-01T08:00:00+00:00",
@@ -22336,7 +22365,7 @@
                         {
                             "Quantity":  1,
                             "GameItemId":  5048,
-                            "MarketingItemId":  11524
+                            "MarketingItemId":  2215
                         }
                     ],
         "Id":  4967,

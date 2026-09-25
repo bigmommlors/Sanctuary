@@ -45,7 +45,7 @@
 
   <Target Name="CopyResources" AfterTargets="PostBuildEvent">
     <ItemGroup>
-      <ResourceFiles Include="$(SolutionDir)Resources\**\*.*" />
+      <ResourceFiles Include="$(MSBuildThisFileDirectory)..\Resources\**\*.*" />
     </ItemGroup>
     <Copy SourceFiles="@(ResourceFiles)" DestinationFolder="$(OutputPath)Resources\%(RecursiveDir)" SkipUnchangedFiles="true" />
   </Target>
