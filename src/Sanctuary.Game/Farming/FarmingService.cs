@@ -32,6 +32,11 @@ public sealed class FarmingService : IFarmingService
     private readonly ConcurrentDictionary<int, Npc> _debugWeedsByZoneId = new();
     private readonly ConcurrentDictionary<int, Npc> _debugRocksByZoneId = new();
     private readonly ConcurrentDictionary<int, Npc> _debugTreesByZoneId = new();
+    /// <summary>
+    /// EXPERIMENTAL: in-flight dig→delayed rock clears keyed by private Wilds zone id.
+    /// Prevents duplicate clicks; cancelled on leave/remove/reset.
+    /// </summary>
+    private readonly ConcurrentDictionary<int, PendingRockClear> _pendingRockClearsByZoneId = new();
 
     public Npc? PlotNpc => _farnumPlot?.Foundation;
 
@@ -49,6 +54,15 @@ public sealed class FarmingService : IFarmingService
         int ReturnZoneId,
         Vector4 ReturnPosition,
         Quaternion ReturnRotation);
+
+    /// <summary>
+    /// EXPERIMENTAL pending dig clear. Commit only if zone/player/rock Guid still match after delay.
+    /// </summary>
+    private readonly record struct PendingRockClear(
+        ulong CharacterId,
+        ulong PlayerGuid,
+        ulong RockGuid,
+        DateTimeOffset DueAtUtc);
 
     public FarmingService(
         ILogger<FarmingService> logger,
@@ -235,6 +249,8 @@ public sealed class FarmingService : IFarmingService
 
         player.TeleportToZone(destination, session.ReturnPosition, session.ReturnRotation);
 
+        CancelPendingRockClear(instanceZoneId);
+
         _wildsPlotsByZoneId.TryRemove(instanceZoneId, out _);
         _debugWeedsByZoneId.TryRemove(instanceZoneId, out _);
         _debugRocksByZoneId.TryRemove(instanceZoneId, out _);
@@ -343,12 +359,15 @@ public sealed class FarmingService : IFarmingService
 
         var zoneId = player.Zone.Id;
 
+        CancelPendingRockClear(zoneId);
+
         if (!_debugRocksByZoneId.TryRemove(zoneId, out var rock))
         {
             message = "No debug rock to remove.";
             return false;
         }
 
+        rock.UpdateEverySecondAction = null;
         rock.Dispose();
 
         _logger.LogInformation(
@@ -362,7 +381,8 @@ public sealed class FarmingService : IFarmingService
     /// <summary>
     /// Click-to-clear for prototype rock. EXPERIMENTAL: requires session Shovel (ToolId=4)
     /// selected via EquipTool 188/7. Without Shovel: reject, leave rock, no DB write.
-    /// With Shovel: existing clear + persist. Not retail Factory obstacle protocol.
+    /// With Shovel: play farm_dig (3900003), wait EXPERIMENTAL ~1.5s via zone second timer,
+    /// then persist+despawn. Not retail Factory obstacle protocol.
     /// </summary>
     private void HandleDebugRockInteract(Player player)
     {
@@ -376,16 +396,28 @@ public sealed class FarmingService : IFarmingService
             "Prototype rock interaction received zone={ZoneId} character={CharacterId} SelectedFarmToolId={SelectedFarmToolId}.",
             zoneId, characterId, player.SelectedFarmToolId);
 
-        if (!FarmingToolSelection.CanClearRock(player.SelectedFarmToolId))
+        var alreadyPending = _pendingRockClearsByZoneId.ContainsKey(zoneId);
+        if (!FarmingRockDigClearExperiment.TryBegin(player.SelectedFarmToolId, alreadyPending, out var rejectMessage))
         {
-            _logger.LogInformation(
-                "Prototype rock clear rejected (Shovel required) zone={ZoneId} character={CharacterId} SelectedFarmToolId={SelectedFarmToolId}.",
-                zoneId, characterId, player.SelectedFarmToolId);
-            ChatHelper.SendSystemMessage(player, FarmingToolSelection.RockRequiresShovelMessage);
+            if (rejectMessage == FarmingToolSelection.RockRequiresShovelMessage)
+            {
+                _logger.LogInformation(
+                    "Prototype rock clear rejected (Shovel required) zone={ZoneId} character={CharacterId} SelectedFarmToolId={SelectedFarmToolId}.",
+                    zoneId, characterId, player.SelectedFarmToolId);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "Prototype rock clear rejected (already pending) zone={ZoneId} character={CharacterId}.",
+                    zoneId, characterId);
+            }
+
+            if (!string.IsNullOrEmpty(rejectMessage))
+                ChatHelper.SendSystemMessage(player, rejectMessage);
             return;
         }
 
-        if (!_debugRocksByZoneId.TryRemove(zoneId, out var rock))
+        if (!_debugRocksByZoneId.TryGetValue(zoneId, out var rock))
         {
             _logger.LogWarning(
                 "Prototype rock interaction but no tracked rock zone={ZoneId} character={CharacterId}.",
@@ -393,15 +425,122 @@ public sealed class FarmingService : IFarmingService
             return;
         }
 
+        var startedAt = DateTimeOffset.UtcNow;
+        var pending = new PendingRockClear(
+            characterId,
+            player.Guid,
+            rock.Guid,
+            FarmingRockDigClearExperiment.ComputeDueAtUtc(startedAt));
+
+        if (!_pendingRockClearsByZoneId.TryAdd(zoneId, pending))
+        {
+            // Race: another click won the pending slot.
+            ChatHelper.SendSystemMessage(player, FarmingRockDigClearExperiment.AlreadyDiggingMessage);
+            return;
+        }
+
+        // Same verified packet path as !farmtest diganim (PlayerUpdatePacketSetAnimation farm_dig).
+        var animPacket = FarmingDigAnimExperiment.CreatePlayNowPacket(player.Guid);
+        player.SendTunneledToVisible(animPacket, sendToSelf: true);
+
+        // Rock stays visible; zone UpdateEverySecondAction commits after EXPERIMENTAL delay.
+        rock.UpdateEverySecondAction = () => TryCompletePendingRockClear(zoneId);
+
+        _logger.LogInformation(
+            "EXPERIMENTAL prototype rock dig started zone={ZoneId} guid={Guid} character={CharacterId} AnimationId={AnimationId} delayMs={DelayMs} dueAt={DueAt:u}.",
+            zoneId, rock.Guid, characterId,
+            FarmingDigAnimExperiment.FarmDigAnimationId,
+            FarmingRockDigClearExperiment.ExperimentalClearDelayMs,
+            pending.DueAtUtc);
+    }
+
+    /// <summary>
+    /// EXPERIMENTAL: zone-second poll for delayed rock clear. Revalidates player + rock before persist.
+    /// </summary>
+    private void TryCompletePendingRockClear(int zoneId)
+    {
+        if (!_pendingRockClearsByZoneId.TryGetValue(zoneId, out var pending))
+        {
+            ClearRockUpdateAction(zoneId);
+            return;
+        }
+
+        if (!FarmingRockDigClearExperiment.IsDue(DateTimeOffset.UtcNow, pending.DueAtUtc))
+            return;
+
+        // Claim completion so duplicate second-ticks / clicks cannot double-persist.
+        if (!_pendingRockClearsByZoneId.TryRemove(zoneId, out pending))
+            return;
+
+        ClearRockUpdateAction(zoneId);
+
+        if (!_debugRocksByZoneId.TryGetValue(zoneId, out var rock) ||
+            !FarmingRockDigClearExperiment.MatchesTrackedRock(pending.RockGuid, rock.Guid))
+        {
+            _logger.LogInformation(
+                "EXPERIMENTAL prototype rock dig aborted (rock gone or replaced) zone={ZoneId} pendingGuid={PendingGuid}.",
+                zoneId, pending.RockGuid);
+            return;
+        }
+
+        if (!_zoneManager.TryGetPlayer(pending.PlayerGuid, out var player) ||
+            !IsInWildsTestInstance(player) ||
+            player.Zone is null ||
+            player.Zone.Id != zoneId ||
+            GuidHelper.GetPlayerId(player.Guid) != pending.CharacterId)
+        {
+            _logger.LogInformation(
+                "EXPERIMENTAL prototype rock dig aborted (player/session invalid) zone={ZoneId} character={CharacterId}.",
+                zoneId, pending.CharacterId);
+            return;
+        }
+
+        // Defensive: shovel still required at commit (leave clears selection + cancels pending).
+        if (!FarmingToolSelection.CanClearRock(player.SelectedFarmToolId))
+        {
+            _logger.LogInformation(
+                "EXPERIMENTAL prototype rock dig aborted (Shovel no longer selected) zone={ZoneId} character={CharacterId}.",
+                zoneId, pending.CharacterId);
+            return;
+        }
+
+        if (!_debugRocksByZoneId.TryRemove(zoneId, out rock) ||
+            !FarmingRockDigClearExperiment.MatchesTrackedRock(pending.RockGuid, rock.Guid))
+        {
+            _logger.LogInformation(
+                "EXPERIMENTAL prototype rock dig aborted (rock removed during commit) zone={ZoneId} pendingGuid={PendingGuid}.",
+                zoneId, pending.RockGuid);
+            return;
+        }
+
         var guid = rock.Guid;
+        rock.UpdateEverySecondAction = null;
         rock.Dispose();
-        PersistObstacleCleared(characterId, FarmingPrototypeConfig.WildsRockObstacleKey);
+        PersistObstacleCleared(pending.CharacterId, FarmingPrototypeConfig.WildsRockObstacleKey);
 
         _logger.LogInformation(
             "Prototype rock cleared/despawned zone={ZoneId} guid={Guid} character={CharacterId} key={ObstacleKey}.",
-            zoneId, guid, characterId, FarmingPrototypeConfig.WildsRockObstacleKey);
+            zoneId, guid, pending.CharacterId, FarmingPrototypeConfig.WildsRockObstacleKey);
 
         ChatHelper.SendSystemMessage(player, "Rock cleared.");
+    }
+
+    private void CancelPendingRockClear(int zoneId)
+    {
+        if (_pendingRockClearsByZoneId.TryRemove(zoneId, out var pending))
+        {
+            _logger.LogInformation(
+                "EXPERIMENTAL prototype rock dig cancelled zone={ZoneId} pendingGuid={PendingGuid} character={CharacterId}.",
+                zoneId, pending.RockGuid, pending.CharacterId);
+        }
+
+        ClearRockUpdateAction(zoneId);
+    }
+
+    private void ClearRockUpdateAction(int zoneId)
+    {
+        if (_debugRocksByZoneId.TryGetValue(zoneId, out var rock))
+            rock.UpdateEverySecondAction = null;
     }
 
     public bool TrySpawnDebugTree(Player player, out string message)
@@ -519,6 +658,7 @@ public sealed class FarmingService : IFarmingService
 
         if (IsInWildsTestInstance(player) && player.Zone is not null)
         {
+            CancelPendingRockClear(player.Zone.Id);
             SpawnUnclearedObstacles(player.Zone, characterId);
             message =
                 "DEBUG: all three obstacles reset to uncleared and re-spawned in current Wilds farm.";
@@ -541,6 +681,32 @@ public sealed class FarmingService : IFarmingService
         _logger.LogInformation(
             "EXPERIMENTAL FACTORY TOOLS: sent OpenToolshed 188/26 empty-type packet to PlayerGuid={PlayerGuid}",
             player.Guid);
+    }
+
+    /// <summary>
+    /// EXPERIMENTAL / debug-only: PlayerUpdatePacketSetAnimation with AnimationId=3900003 (farm_dig), Flags=0 (play now).
+    /// Private Wilds farm only. No Shovel requirement, no mesh attach, no obstacle/crop/DB changes.
+    /// </summary>
+    public bool TrySendExperimentalDigAnimation(Player player, out string message)
+    {
+        if (!IsInWildsTestInstance(player))
+        {
+            message = FarmingDigAnimExperiment.NotInWildsFarmMessage;
+            return false;
+        }
+
+        var packet = FarmingDigAnimExperiment.CreatePlayNowPacket(player.Guid);
+        player.SendTunneledToVisible(packet, sendToSelf: true);
+
+        _logger.LogInformation(
+            "EXPERIMENTAL FARM DIG ANIM: sent PlayerUpdatePacketSetAnimation AnimationId={AnimationId} (farm_dig) Flags={Flags} Unknown={Unknown} to PlayerGuid={PlayerGuid}",
+            packet.AnimationId,
+            packet.Flags,
+            packet.Unknown,
+            player.Guid);
+
+        message = FarmingDigAnimExperiment.SuccessMessage;
+        return true;
     }
 
     /// <summary>

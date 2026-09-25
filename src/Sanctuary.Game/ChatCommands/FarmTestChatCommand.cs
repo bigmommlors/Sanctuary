@@ -13,10 +13,10 @@ public class FarmTestChatCommand : IChatCommand
     public string KeyWord => "farmtest";
 
     public string Usage =>
-        "enter|leave|seed|status|grow|reset|tp|weed|weedremove|rock|rockremove|tree|treeremove|obstacles|obstaclesreset|toolshed";
+        "enter|leave|seed|status|grow|reset|tp|weed|weedremove|rock|rockremove|tree|treeremove|obstacles|obstaclesreset|toolshed|diganim";
 
     public string Description =>
-        "Wilds Farm private test (enter/leave) + Farnum harness helpers + persistent weed/rock/tree obstacles. EXPERIMENTAL toolshed opens Factory 188/26 empty-type only.";
+        "Wilds Farm private test (enter/leave) + Farnum harness helpers + persistent weed/rock/tree obstacles. EXPERIMENTAL toolshed / diganim.";
 
     public ChatCommandRole RequiredRole => ChatCommandRole.Admin;
 
@@ -151,6 +151,16 @@ public class FarmTestChatCommand : IChatCommand
                 _farmingService.SendExperimentalOpenToolshed(invoker);
                 _chatCommandManager.LogAction(this, invoker, "Farmtest experimental OpenToolshed 188/26", null, null);
                 ChatHelper.SendSystemMessage(invoker, "EXPERIMENTAL: sent Factory OpenToolshed (188/26 empty type).");
+                break;
+            case "diganim":
+                // EXPERIMENTAL / debug-only: farm_dig via PlayerUpdatePacketSetAnimation. Wilds farm only. No shovel/mesh/DB.
+                if (!_farmingService.TrySendExperimentalDigAnimation(invoker, out var digAnimMsg))
+                    ChatHelper.SendSystemMessage(invoker, digAnimMsg);
+                else
+                {
+                    _chatCommandManager.LogAction(this, invoker, "Farmtest experimental diganim farm_dig 3900003", null, null);
+                    ChatHelper.SendSystemMessage(invoker, digAnimMsg);
+                }
                 break;
             default:
                 return false;

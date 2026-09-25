@@ -66,4 +66,10 @@ public interface IFarmingService
     /// Does not list tools, equip tools, spawn NPCs, or handle ListToolsRequest.
     /// </summary>
     void SendExperimentalOpenToolshed(Player player);
+
+    /// <summary>
+    /// EXPERIMENTAL / debug-only: play farm_dig (3900003) on the player via PlayerUpdatePacketSetAnimation.
+    /// Restricted to private Wilds farm. Does not require Shovel, attach mesh, clear rocks, or write DB.
+    /// </summary>
+    bool TrySendExperimentalDigAnimation(Player player, out string message);
 }

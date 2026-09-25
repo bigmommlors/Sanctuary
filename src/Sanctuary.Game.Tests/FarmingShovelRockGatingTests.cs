@@ -68,7 +68,9 @@ public sealed class FarmingShovelRockGatingTests
         Assert.IsFalse(string.IsNullOrWhiteSpace(FarmingToolSelection.RockRequiresShovelMessage));
         StringAssert.Contains(FarmingToolSelection.RockRequiresShovelMessage, "Shovel");
 
-        // Decision contract: handler must return before despawn/PersistObstacleCleared when false.
+        // Decision contract: handler must return before animate/despawn/PersistObstacleCleared when false.
+        Assert.IsFalse(FarmingRockDigClearExperiment.TryBegin(selected, alreadyPending: false, out var reject));
+        Assert.AreEqual(FarmingToolSelection.RockRequiresShovelMessage, reject);
         Assert.IsFalse(FarmingToolSelection.CanClearRock(5));
         Assert.IsFalse(FarmingToolSelection.CanClearRock(0));
     }
@@ -79,6 +81,10 @@ public sealed class FarmingShovelRockGatingTests
         int? selected = FarmingToolSelection.ShovelToolId;
 
         Assert.IsTrue(FarmingToolSelection.CanClearRock(selected));
+        Assert.IsTrue(FarmingRockDigClearExperiment.TryBegin(selected, alreadyPending: false, out var reject));
+        Assert.IsNull(reject);
+        // Persist still occurs only after EXPERIMENTAL delay + revalidation (not at begin).
+        Assert.AreEqual(1500, FarmingRockDigClearExperiment.ExperimentalClearDelayMs);
     }
 
     [TestMethod]
